@@ -561,7 +561,454 @@ export default function App() {
               <button type="submit" className="w-full bg-rose-600 py-3.5 rounded-xl font-bold hover:bg-rose-500 transition-colors">Record Transaction</button>
             </form>
           </div>
+        </div>import React, { useState, useEffect, useCallback } from 'react';
+import { initializeApp, getApps } from 'firebase/app';
+import { 
+  getFirestore, collection, doc, addDoc, onSnapshot, 
+  query, serverTimestamp, setDoc 
+} from 'firebase/firestore';
+import { 
+  getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  Plus, X, Wallet, MapPin, Link as LinkIcon, 
+  TrendingUp, Calendar, FileText, CheckCircle2, AlertCircle
+} from 'lucide-react';
+
+// --- FIREBASE CONFIGURATION ---
+const getFirebaseConfig = () => {
+  try {
+    return typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+  } catch (e) {
+    return null;
+  }
+};
+
+const firebaseConfig = getFirebaseConfig();
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'asset-tracker-default';
+
+let db, auth;
+if (firebaseConfig) {
+  const app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
+  db = getFirestore(app);
+  auth = getAuth(app);
+}
+
+// --- UTILS ---
+const formatCurrency = (amount) => {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+  }).format(amount || 0);
+};
+
+// --- COMPONENTS ---
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [assets, setAssets] = useState([]);
+  const [showAssetModal, setShowAssetModal] = useState(false);
+  const [showExpenseModal, setShowExpenseModal] = useState(false);
+  const [selectedAsset, setSelectedAsset] = useState(null);
+
+  // 1. AUTHENTICATION (Mandatory Rule 3)
+  useEffect(() => {
+    if (!auth) {
+      setLoading(false);
+      return;
+    }
+
+    const initAuth = async (retries = 0) => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        if (retries < 5) {
+          const delay = Math.pow(2, retries) * 1000;
+          setTimeout(() => initAuth(retries + 1), delay);
+        } else {
+          setError("Connection failed. Please check your Firebase settings.");
+        }
+      }
+    };
+
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 2. DATA SYNC (Mandatory Rule 1)
+  useEffect(() => {
+    if (!user || !db) return;
+
+    // Public collection path as per environment requirements
+    const assetCol = collection(db, 'artifacts', appId, 'public', 'data', 'assets');
+    
+    const unsubscribe = onSnapshot(assetCol, 
+      (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAssets(data);
+      },
+      (err) => {
+        console.error("Firestore Error:", err);
+        setError("Unable to sync data. Ensure security rules allow access.");
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // --- ACTIONS ---
+
+  const handleAddAsset = async (formData) => {
+    if (!user || !db) return;
+    try {
+      const assetCol = collection(db, 'artifacts', appId, 'public', 'data', 'assets');
+      await addDoc(assetCol, {
+        ...formData,
+        expenses: [],
+        createdAt: serverTimestamp(),
+        createdBy: user.uid
+      });
+      setShowAssetModal(false);
+    } catch (err) {
+      setError("Failed to create asset.");
+    }
+  };
+
+  const handleAddExpense = async (assetId, expenseData) => {
+    if (!user || !db) return;
+    try {
+      const assetRef = doc(db, 'artifacts', appId, 'public', 'data', 'assets', assetId);
+      const asset = assets.find(a => a.id === assetId);
+      const updatedExpenses = [...(asset.expenses || []), { ...expenseData, id: crypto.randomUUID(), createdAt: Date.now() }];
+      
+      await setDoc(assetRef, { ...asset, expenses: updatedExpenses }, { merge: true });
+      setShowExpenseModal(false);
+    } catch (err) {
+      setError("Failed to record transaction.");
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#0f111a] flex items-center justify-center text-white font-sans">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-slate-400 animate-pulse font-medium">Connecting to Secure Vault...</p>
         </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-[#0f111a] text-slate-200 font-sans selection:bg-indigo-500/30">
+      {/* Top Bar */}
+      <nav className="border-b border-slate-800 bg-[#0f111a]/80 backdrop-blur-md sticky top-0 z-40 px-6 py-4">
+        <div className="max-w-7xl mx-auto flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-indigo-500 rounded-lg">
+              <Wallet className="w-6 h-6 text-white" />
+            </div>
+            <h1 className="text-xl font-black tracking-tight text-white italic">ASSET LENS</h1>
+          </div>
+          
+          <div className="flex items-center gap-4">
+            {error && (
+              <div className="hidden md:flex items-center gap-2 text-rose-400 bg-rose-400/10 px-3 py-1.5 rounded-full text-xs font-bold">
+                <AlertCircle className="w-4 h-4" />
+                {error}
+              </div>
+            )}
+            <button 
+              onClick={() => setShowAssetModal(true)}
+              className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-indigo-500/20 flex items-center gap-2"
+            >
+              <Plus className="w-5 h-5" />
+              <span>Initiate Asset</span>
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <main className="max-w-7xl mx-auto p-6">
+        {assets.length === 0 ? (
+          <div className="mt-20 flex flex-col items-center text-center max-w-sm mx-auto">
+            <div className="w-20 h-20 bg-slate-900 rounded-3xl flex items-center justify-center mb-6 border border-slate-800">
+              <TrendingUp className="w-10 h-10 text-slate-700" />
+            </div>
+            <h2 className="text-xl font-bold text-white mb-2">No Assets Tracked</h2>
+            <p className="text-slate-500 text-sm mb-8 leading-relaxed">
+              Start by initiating your first project or asset to begin tracking budgets and expenses in real-time.
+            </p>
+            <button 
+              onClick={() => setShowAssetModal(true)}
+              className="text-indigo-400 font-bold hover:text-indigo-300 transition-colors underline underline-offset-4"
+            >
+              Initialize your first asset →
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {assets.map(asset => (
+              <AssetCard 
+                key={asset.id} 
+                asset={asset} 
+                onAddExpense={() => {
+                  setSelectedAsset(asset);
+                  setShowExpenseModal(true);
+                }} 
+              />
+            ))}
+          </div>
+        )}
+      </main>
+
+      {/* MODALS */}
+      {showAssetModal && (
+        <AssetModal onClose={() => setShowAssetModal(false)} onSubmit={handleAddAsset} />
+      )}
+      {showExpenseModal && (
+        <ExpenseModal 
+          asset={selectedAsset} 
+          onClose={() => setShowExpenseModal(false)} 
+          onSubmit={(data) => handleAddExpense(selectedAsset.id, data)} 
+        />
+      )}
+    </div>
+  );
+}
+
+function AssetCard({ asset, onAddExpense }) {
+  const totalExpenses = (asset.expenses || []).reduce((sum, exp) => sum + Number(exp.amount), 0);
+  const remaining = Number(asset.budget) - totalExpenses;
+  const progress = Math.min((totalExpenses / Number(asset.budget)) * 100, 100);
+
+  return (
+    <div className="bg-slate-900/50 border border-slate-800 rounded-3xl p-6 hover:border-indigo-500/50 transition-all group overflow-hidden relative">
+      <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+        <TrendingUp className="w-24 h-24 text-indigo-500" />
+      </div>
+      
+      <div className="relative z-10">
+        <div className="flex justify-between items-start mb-6">
+          <div>
+            <h3 className="text-lg font-bold text-white mb-1 group-hover:text-indigo-400 transition-colors uppercase tracking-tight">
+              {asset.title}
+            </h3>
+            <div className="flex items-center gap-2 text-slate-500 text-xs font-medium">
+              <MapPin className="w-3 h-3" />
+              {asset.location}
+            </div>
+          </div>
+          <button 
+            onClick={onAddExpense}
+            className="p-2 bg-slate-800 hover:bg-rose-500 text-slate-400 hover:text-white rounded-xl transition-all"
+          >
+            <Plus className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="space-y-4 mb-6">
+          <div className="flex justify-between items-end">
+            <div>
+              <p className="text-[10px] uppercase tracking-widest font-black text-slate-500 mb-1">Spent</p>
+              <p className="text-xl font-black text-white">{formatCurrency(totalExpenses)}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] uppercase tracking-widest font-black text-slate-500 mb-1">Budget</p>
+              <p className="text-sm font-bold text-slate-400">{formatCurrency(asset.budget)}</p>
+            </div>
+          </div>
+
+          <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+            <div 
+              className={`h-full transition-all duration-1000 ${progress > 90 ? 'bg-rose-500' : 'bg-indigo-500'}`}
+              style={{ width: `${progress}%` }}
+            ></div>
+          </div>
+        </div>
+
+        <div className="pt-4 border-t border-slate-800/50 flex justify-between items-center">
+          <div className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
+            <Calendar className="w-3 h-3" />
+            {new Date(asset.createdAt?.seconds * 1000 || Date.now()).toLocaleDateString()}
+          </div>
+          <div className={`text-[10px] font-black uppercase px-2 py-1 rounded-md ${remaining >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+            {remaining >= 0 ? 'Under Budget' : 'Over Budget'}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AssetModal({ onClose, onSubmit }) {
+  const [form, setForm] = useState({ title: '', location: '', mapUrl: '', budget: '', deposit: '' });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#08090d]/90 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-[#12141c] w-full max-w-lg rounded-[2.5rem] p-8 border border-slate-800 shadow-2xl">
+        <div className="flex justify-between items-center mb-10">
+          <h2 className="text-2xl font-black text-white italic tracking-tight">INITIATE ASSET</h2>
+          <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-full text-slate-500"><X /></button>
+        </div>
+
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Title</label>
+            <input 
+              autoFocus
+              className="w-full bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 text-white focus:outline-none focus:border-indigo-500 transition-all placeholder:text-slate-700"
+              placeholder="e.g. PROJECT X"
+              onChange={e => setForm({...form, title: e.target.value})}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Location</label>
+              <div className="relative">
+                <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600" />
+                <input 
+                  className="w-full bg-slate-900/50 border border-slate-800 rounded-2xl pl-12 pr-5 py-4 text-white focus:outline-none focus:border-indigo-500 transition-all placeholder:text-slate-700"
+                  placeholder="City"
+                  onChange={e => setForm({...form, location: e.target.value})}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Map URL</label>
+              <div className="relative">
+                <LinkIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600" />
+                <input 
+                  className="w-full bg-slate-900/50 border border-slate-800 rounded-2xl pl-12 pr-5 py-4 text-white focus:outline-none focus:border-indigo-500 transition-all placeholder:text-slate-700"
+                  placeholder="Link"
+                  onChange={e => setForm({...form, mapUrl: e.target.value})}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Budget ($)</label>
+              <input 
+                type="number"
+                className="w-full bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 text-white focus:outline-none focus:border-indigo-500 transition-all placeholder:text-slate-700"
+                placeholder="0"
+                onChange={e => setForm({...form, budget: e.target.value})}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Deposit ($)</label>
+              <input 
+                type="number"
+                className="w-full bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 text-white focus:outline-none focus:border-indigo-500 transition-all placeholder:text-slate-700"
+                placeholder="0"
+                onChange={e => setForm({...form, deposit: e.target.value})}
+              />
+            </div>
+          </div>
+
+          <button 
+            disabled={!form.title || !form.budget}
+            onClick={() => onSubmit(form)}
+            className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 text-white font-black py-5 rounded-2xl transition-all shadow-xl shadow-indigo-500/10 mt-4 uppercase tracking-widest"
+          >
+            Create Asset
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExpenseModal({ asset, onClose, onSubmit }) {
+  const [form, setForm] = useState({ category: 'Equipment', amount: '', date: new Date().toISOString().split('T')[0], note: '' });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#08090d]/90 backdrop-blur-sm animate-in zoom-in duration-200">
+      <div className="bg-[#12141c] w-full max-w-lg rounded-[2.5rem] p-8 border border-slate-800 shadow-2xl">
+        <div className="flex justify-between items-center mb-8">
+          <div>
+            <h2 className="text-2xl font-black text-rose-500 tracking-tight">ADD EXPENSE</h2>
+            <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mt-1">FOR {asset?.title}</p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-full text-slate-500"><X /></button>
+        </div>
+
+        <div className="space-y-5">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Category</label>
+            <select 
+              className="w-full bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 text-white focus:outline-none focus:border-rose-500 transition-all appearance-none"
+              onChange={e => setForm({...form, category: e.target.value})}
+              value={form.category}
+            >
+              <option>Equipment</option>
+              <option>Location Fee</option>
+              <option>Travel</option>
+              <option>Maintenance</option>
+              <option>Other</option>
+            </select>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Amount ($)</label>
+            <input 
+              type="number"
+              autoFocus
+              className="w-full bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 text-rose-400 font-bold text-lg focus:outline-none focus:border-rose-500 transition-all placeholder:text-slate-700"
+              placeholder="0.00"
+              onChange={e => setForm({...form, amount: e.target.value})}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Date</label>
+            <div className="relative">
+              <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600" />
+              <input 
+                type="date"
+                className="w-full bg-slate-900/50 border border-slate-800 rounded-2xl pl-12 pr-5 py-4 text-white focus:outline-none focus:border-rose-500 transition-all"
+                value={form.date}
+                onChange={e => setForm({...form, date: e.target.value})}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Reason / Notes</label>
+            <textarea 
+              rows="3"
+              className="w-full bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 text-white focus:outline-none focus:border-rose-500 transition-all placeholder:text-slate-700 resize-none"
+              placeholder="Add details..."
+              onChange={e => setForm({...form, note: e.target.value})}
+            />
+          </div>
+
+          <button 
+            disabled={!form.amount}
+            onClick={() => onSubmit(form)}
+            className="w-full bg-rose-500 hover:bg-rose-600 disabled:opacity-30 text-white font-black py-5 rounded-2xl transition-all shadow-xl shadow-rose-500/20 mt-4 uppercase tracking-widest flex items-center justify-center gap-3"
+          >
+            <CheckCircle2 className="w-5 h-5" />
+            Record Transaction
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
       )}
 
     </div>
