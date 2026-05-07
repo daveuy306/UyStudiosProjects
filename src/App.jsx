@@ -4,7 +4,7 @@ import {
   Briefcase, BarChart3, Film, CheckCircle2, 
   TrendingUp, Users, Calendar, 
   UserPlus, MinusCircle, Database, Link as LinkIcon,
-  Receipt, Wallet, ArrowDownCircle, ArrowUpCircle, Sparkles, Loader2
+  Receipt, Wallet, ArrowDownCircle, ArrowUpCircle, Sparkles, Loader2, AlertCircle
 } from 'lucide-react';
 import { 
   XAxis, YAxis, Tooltip, ResponsiveContainer, 
@@ -17,23 +17,14 @@ import {
   getFirestore, collection, onSnapshot, addDoc, 
   updateDoc, deleteDoc, doc, query
 } from 'firebase/firestore';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 
-const firebaseConfig = {
-  apiKey: "AIzaSyAiSo4QbPqEOX-bTvbE7BjHtOY78_fTHpY",
-  authDomain: "uystudiosprojectdatabase.firebaseapp.com",
-  projectId: "uystudiosprojectdatabase",
-  storageBucket: "uystudiosprojectdatabase.firebasestorage.app",
-  messagingSenderId: "167809203911",
-  appId: "1:167809203911:web:9b72b71460cfd92ab8c8e2",
-  measurementId: "G-8R4PKT6WM4"
-};
-
+const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'uystudios-prod';
 
-const APP_ID = 'uystudios-prod';
 const STATUS_OPTIONS = ['Completed', 'In Progress', 'Pending', 'Cancelled'];
 const EXPENSE_CATEGORIES = ['Equipment', 'Travel', 'Software', 'Marketing', 'Catering', 'Other'];
 
@@ -58,36 +49,41 @@ export default function App() {
   // AI State
   const [aiInput, setAiInput] = useState('');
   const [aiProcessing, setAiProcessing] = useState(false);
+  const [aiError, setAiError] = useState(null);
 
+  // Auth Initialization
   useEffect(() => {
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInAnonymously(auth); 
+          await signInWithCustomToken(auth, __initial_auth_token);
         } else {
           await signInAnonymously(auth);
         }
-      } catch (e) { console.error(e); }
+      } catch (e) {
+        console.error("Auth Error:", e);
+      }
     };
     initAuth();
-    return onAuthStateChanged(auth, setUser);
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
   }, []);
 
+  // Data Sync
   useEffect(() => {
     if (!user) return;
-    setLoading(true);
-
-    const projectsRef = collection(db, 'artifacts', APP_ID, 'public', 'data', 'projects');
-    const expensesRef = collection(db, 'artifacts', APP_ID, 'public', 'data', 'expenses');
+    
+    const projectsRef = collection(db, 'artifacts', appId, 'public', 'data', 'projects');
+    const expensesRef = collection(db, 'artifacts', appId, 'public', 'data', 'expenses');
 
     const unsubProjects = onSnapshot(projectsRef, (snapshot) => {
       setProjects(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })));
-    }, (err) => console.error(err));
+    }, (err) => console.error("Firestore Projects Error:", err));
 
     const unsubExpenses = onSnapshot(expensesRef, (snapshot) => {
       setExpenses(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })));
       setLoading(false);
-    }, (err) => console.error(err));
+    }, (err) => console.error("Firestore Expenses Error:", err));
 
     return () => {
       unsubProjects();
@@ -132,13 +128,6 @@ export default function App() {
     ).sort((a, b) => new Date(b.date) - new Date(a.date));
   }, [projects, searchTerm]);
 
-  const filteredExpenses = useMemo(() => {
-    return expenses.filter(e => 
-      (e.title?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-      (e.category?.toLowerCase() || '').includes(searchTerm.toLowerCase())
-    ).sort((a, b) => new Date(b.date) - new Date(a.date));
-  }, [expenses, searchTerm]);
-
   const handleSaveProject = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -154,7 +143,7 @@ export default function App() {
       payrollMembers,
       updatedAt: new Date().toISOString()
     };
-    const path = ['artifacts', APP_ID, 'public', 'data', 'projects'];
+    const path = ['artifacts', appId, 'public', 'data', 'projects'];
     if (editingProject) await updateDoc(doc(db, ...path, editingProject.id), data);
     else await addDoc(collection(db, ...path), { ...data, createdAt: new Date().toISOString() });
     setIsProjectModalOpen(false);
@@ -171,7 +160,7 @@ export default function App() {
       notes: fd.get('notes'),
       updatedAt: new Date().toISOString()
     };
-    const path = ['artifacts', APP_ID, 'public', 'data', 'expenses'];
+    const path = ['artifacts', appId, 'public', 'data', 'expenses'];
     if (editingExpense) await updateDoc(doc(db, ...path, editingExpense.id), data);
     else await addDoc(collection(db, ...path), { ...data, createdAt: new Date().toISOString() });
     setIsExpenseModalOpen(false);
@@ -180,16 +169,13 @@ export default function App() {
   const handleAiSync = async () => {
     if (!aiInput.trim()) return;
     setAiProcessing(true);
-    const apiKey = "";
-    const systemPrompt = `You are a production data parser for UY Studios. 
-    Analyze the provided raw text (likely from a Google Doc) and extract production projects. 
-    Return a JSON object with an 'items' array. Each item MUST have:
-    - client: string (e.g. "Nike")
-    - event: string (e.g. "Commercial Shoot")
-    - date: string (YYYY-MM-DD)
-    - budget: number (numeric value only)
-    - status: string (One of: "Completed", "In Progress", "Pending")
-    Ignore non-project text. If no date is found, use today's date.`;
+    setAiError(null);
+    const apiKey = ""; // The environment provides this key automatically at runtime
+    
+    const systemPrompt = `You are a data entry expert for UY Studios. 
+    Analyze raw text and extract production jobs. 
+    Return a JSON object with this schema: { "items": [{ "client": string, "event": string, "date": "YYYY-MM-DD", "budget": number, "status": "Pending" | "Completed" | "In Progress" }] }. 
+    If data is missing, make reasonable guesses based on context. Be accurate with numbers.`;
 
     try {
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
@@ -201,22 +187,33 @@ export default function App() {
           generationConfig: { responseMimeType: "application/json" }
         })
       });
-      const result = await response.json();
-      const extracted = JSON.parse(result.candidates[0].content.parts[0].text);
       
-      const projectsRef = collection(db, 'artifacts', APP_ID, 'public', 'data', 'projects');
-      for (const item of extracted.items) {
+      if (!response.ok) throw new Error("Sync engine failed to respond.");
+
+      const result = await response.json();
+      const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error("Could not parse data from document text.");
+
+      const extracted = JSON.parse(text);
+      const projectsRef = collection(db, 'artifacts', appId, 'public', 'data', 'projects');
+      
+      for (const item of (extracted.items || [])) {
         await addDoc(projectsRef, {
           ...item,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
-          payrollMembers: []
+          payrollMembers: [],
+          paid: 0,
+          location: "",
+          locationUrl: ""
         });
       }
+      
       setIsAiModalOpen(false);
       setAiInput('');
     } catch (error) {
       console.error(error);
+      setAiError(error.message || "An error occurred during extraction.");
     } finally {
       setAiProcessing(false);
     }
@@ -233,7 +230,7 @@ export default function App() {
             <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-600/20"><Film size={20} /></div>
             <h1 className="text-lg font-black tracking-tighter uppercase text-white">UY Studios</h1>
           </div>
-          <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest px-1">Production Registry</div>
+          <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest px-1">Registry v2.0</div>
         </div>
         <nav className="flex-1 px-4 space-y-1">
           <SidebarLink icon={<LayoutDashboard size={18}/>} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
@@ -249,25 +246,25 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
         <header className="h-20 border-b border-white/5 px-8 flex items-center justify-between bg-[#020617]/50 backdrop-blur-md sticky top-0 z-50">
           <div className="relative w-96 hidden md:block">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" size={16} />
-            <input type="text" placeholder={`Search ${activeTab}...`} className="bg-white/5 border border-white/5 rounded-2xl px-11 py-2.5 text-xs w-full outline-none focus:border-indigo-500/50" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+            <input type="text" placeholder={`Search ${activeTab}...`} className="bg-white/5 border border-white/5 rounded-2xl px-11 py-2.5 text-xs w-full outline-none focus:border-indigo-500/50 transition-all" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
           </div>
           
           <div className="flex gap-3">
              {activeTab === 'projects' && (
-                <button onClick={() => setIsAiModalOpen(true)} className="bg-white/5 border border-white/10 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black flex items-center gap-2 hover:bg-white/10 uppercase tracking-widest">
+                <button onClick={() => setIsAiModalOpen(true)} className="bg-white/5 border border-white/10 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black flex items-center gap-2 hover:bg-white/10 uppercase tracking-widest transition-all">
                   <Sparkles size={14} className="text-indigo-400" /> Sync from Document
                 </button>
              )}
              {activeTab === 'expenses' ? (
-                <button onClick={() => { setEditingExpense(null); setIsExpenseModalOpen(true); }} className="bg-rose-600 text-white px-6 py-2.5 rounded-2xl text-[10px] font-black flex items-center gap-2 hover:bg-rose-500 shadow-lg shadow-rose-600/20 uppercase tracking-widest">
+                <button onClick={() => { setEditingExpense(null); setIsExpenseModalOpen(true); }} className="bg-rose-600 text-white px-6 py-2.5 rounded-2xl text-[10px] font-black flex items-center gap-2 hover:bg-rose-500 shadow-lg shadow-rose-600/20 uppercase tracking-widest transition-all">
                   <Plus size={16} /> LOG EXPENSE
                 </button>
              ) : (
-                <button onClick={() => { setEditingProject(null); setPayrollMembers([]); setIsProjectModalOpen(true); }} className="bg-indigo-600 text-white px-6 py-2.5 rounded-2xl text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500 shadow-lg shadow-indigo-600/20 uppercase tracking-widest">
+                <button onClick={() => { setEditingProject(null); setPayrollMembers([]); setIsProjectModalOpen(true); }} className="bg-indigo-600 text-white px-6 py-2.5 rounded-2xl text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500 shadow-lg shadow-indigo-600/20 uppercase tracking-widest transition-all">
                   <Plus size={16} /> NEW PRODUCTION
                 </button>
              )}
@@ -277,16 +274,16 @@ export default function App() {
         <main className="p-4 md:p-8 space-y-8">
           {activeTab === 'dashboard' && (
             <>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatCard label="Gross Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} color="indigo" icon={<TrendingUp size={16}/>} />
                 <StatCard label="Total Costs" value={`$${stats.totalCosts.toLocaleString()}`} color="rose" icon={<ArrowDownCircle size={16}/>} />
                 <StatCard label="Net Profit" value={`$${stats.netProfit.toLocaleString()}`} color="emerald" icon={<CheckCircle2 size={16}/>} />
                 <StatCard label="Active Jobs" value={projects.filter(p => p.status === 'In Progress').length} color="amber" icon={<Calendar size={16}/>} />
               </div>
 
-              <div className="bg-[#0F172A] p-8 rounded-[2.5rem] border border-white/5 shadow-2xl overflow-hidden">
-                <h3 className="text-[10px] font-black uppercase text-slate-500 mb-10 tracking-widest opacity-50">Revenue Trends</h3>
-                <div className="h-[300px] w-full">
+              <div className="bg-[#0F172A] p-4 md:p-8 rounded-[2.5rem] border border-white/5 shadow-2xl overflow-hidden">
+                <h3 className="text-[10px] font-black uppercase text-slate-500 mb-6 md:mb-10 tracking-widest opacity-50">Revenue Trends</h3>
+                <div className="h-[250px] md:h-[300px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={stats.incomeChartData}>
                       <defs>
@@ -337,12 +334,17 @@ export default function App() {
                         <td className="px-8 py-6"><StatusBadge status={p.status} /></td>
                         <td className="px-8 py-6 text-right">
                           <div className="flex gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => { setEditingProject(p); setPayrollMembers(p.payrollMembers || []); setIsProjectModalOpen(true); }} className="p-2 text-slate-500 hover:text-white"><Edit2 size={14}/></button>
-                            <button onClick={async () => { if(confirm("Delete?")) await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'projects', p.id)) }} className="p-2 text-slate-500 hover:text-rose-400"><Trash2 size={14}/></button>
+                            <button onClick={() => { setEditingProject(p); setPayrollMembers(p.payrollMembers || []); setIsProjectModalOpen(true); }} className="p-2 text-slate-500 hover:text-white transition-all"><Edit2 size={14}/></button>
+                            <button onClick={async () => { if(confirm("Confirm deletion of this production?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'projects', p.id)) }} className="p-2 text-slate-500 hover:text-rose-400 transition-all"><Trash2 size={14}/></button>
                           </div>
                         </td>
                       </tr>
                     ))}
+                    {filteredProjects.length === 0 && (
+                      <tr>
+                        <td colSpan="5" className="px-8 py-20 text-center text-slate-500 text-xs uppercase font-black tracking-widest opacity-20">No matching productions found</td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -376,8 +378,8 @@ export default function App() {
                         </td>
                         <td className="px-8 py-6 text-right">
                           <div className="flex gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => { setEditingExpense(e); setIsExpenseModalOpen(true); }} className="p-2 text-slate-500 hover:text-white"><Edit2 size={14}/></button>
-                            <button onClick={async () => { if(confirm("Delete?")) await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'expenses', e.id)) }} className="p-2 text-slate-500 hover:text-rose-400"><Trash2 size={14}/></button>
+                            <button onClick={() => { setEditingExpense(e); setIsExpenseModalOpen(true); }} className="p-2 text-slate-500 hover:text-white transition-all"><Edit2 size={14}/></button>
+                            <button onClick={async () => { if(confirm("Delete this expense record?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'expenses', e.id)) }} className="p-2 text-slate-500 hover:text-rose-400 transition-all"><Trash2 size={14}/></button>
                           </div>
                         </td>
                       </tr>
@@ -392,22 +394,35 @@ export default function App() {
 
       {/* AI Sync Modal */}
       {isAiModalOpen && (
-        <Modal title="Sync Productions via AI" onClose={() => setIsAiModalOpen(false)}>
+        <Modal title="Document Content Sync" onClose={() => { setIsAiModalOpen(false); setAiError(null); }}>
           <div className="space-y-6">
-            <p className="text-xs text-slate-400 leading-relaxed">Paste the content from your Google Doc or spreadsheet below. Our AI will automatically extract the production details and add them to your database.</p>
+            <p className="text-xs text-slate-400 leading-relaxed bg-indigo-500/5 p-4 rounded-2xl border border-indigo-500/10">
+              <Sparkles size={14} className="inline mr-2 text-indigo-400" />
+              Paste project summaries, emails, or notes from your Google Doc. The AI will extract Client, Event, Date, and Budget into your database automatically.
+            </p>
+            
             <textarea 
-              className="w-full h-64 bg-white/5 border border-white/10 rounded-2xl p-6 text-sm text-white outline-none focus:border-indigo-500 transition-colors placeholder:text-slate-700" 
-              placeholder="Paste project list here..."
+              className="w-full h-48 md:h-64 bg-white/5 border border-white/10 rounded-[2rem] p-6 text-sm text-white outline-none focus:border-indigo-500 transition-all placeholder:text-slate-700 resize-none" 
+              placeholder="Nike Shoot - Dec 12 - $15000..."
               value={aiInput}
               onChange={e => setAiInput(e.target.value)}
+              disabled={aiProcessing}
             />
+
+            {aiError && (
+              <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4 flex items-start gap-3">
+                <AlertCircle size={16} className="text-rose-500 mt-0.5" />
+                <p className="text-[10px] text-rose-400 uppercase font-black tracking-widest">{aiError}</p>
+              </div>
+            )}
+
             <button 
               onClick={handleAiSync}
               disabled={aiProcessing || !aiInput.trim()}
-              className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-black py-5 rounded-2xl uppercase tracking-widest text-[10px] transition-all flex items-center justify-center gap-3"
+              className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-black py-5 rounded-[2rem] uppercase tracking-widest text-[10px] transition-all flex items-center justify-center gap-3 shadow-xl shadow-indigo-600/20"
             >
               {aiProcessing ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-              {aiProcessing ? 'Processing Data...' : 'Start Intelligent Sync'}
+              {aiProcessing ? 'Processing Document...' : 'Start Intelligent Sync'}
             </button>
           </div>
         </Modal>
@@ -416,25 +431,25 @@ export default function App() {
       {/* Project Modal */}
       {isProjectModalOpen && (
         <Modal title={`${editingProject ? 'Modify' : 'New'} Production`} onClose={() => setIsProjectModalOpen(false)}>
-          <form onSubmit={handleSaveProject} className="space-y-8">
-            <div className="grid grid-cols-2 gap-6">
+          <form onSubmit={handleSaveProject} className="space-y-6 md:space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <FormInput label="Client" name="client" defaultValue={editingProject?.client} required />
               <FormInput label="Event" name="event" defaultValue={editingProject?.event} required />
             </div>
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <FormInput label="Location" name="location" defaultValue={editingProject?.location} />
               <FormInput label="Maps URL" name="locationUrl" defaultValue={editingProject?.locationUrl} />
             </div>
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <FormInput label="Date" name="date" type="date" defaultValue={editingProject?.date} />
               <div className="space-y-1">
                 <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest ml-1">Status</label>
-                <select name="status" defaultValue={editingProject?.status || 'Pending'} className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-sm text-white outline-none">
+                <select name="status" defaultValue={editingProject?.status || 'Pending'} className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-sm text-white outline-none focus:border-indigo-500 transition-all">
                   {STATUS_OPTIONS.map(s => <option key={s} value={s} className="bg-[#0F172A]">{s}</option>)}
                 </select>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <FormInput label="Budget ($)" name="budget" type="number" defaultValue={editingProject?.budget} />
               <FormInput label="Paid ($)" name="paid" type="number" defaultValue={editingProject?.paid} />
             </div>
@@ -443,16 +458,18 @@ export default function App() {
                 <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Crew Payroll</label>
                 <button type="button" onClick={() => setPayrollMembers([...payrollMembers, { id: Date.now(), name: '', pay: '', role: '' }])} className="text-[10px] font-black text-indigo-400 uppercase tracking-widest hover:text-white transition-all">+ Add Member</button>
               </div>
-              {payrollMembers.map(m => (
-                <div key={m.id} className="grid grid-cols-12 gap-3 items-center bg-white/5 p-4 rounded-2xl border border-white/5">
-                  <input placeholder="Name" className="col-span-4 bg-transparent text-xs outline-none text-white" value={m.name} onChange={e => setPayrollMembers(payrollMembers.map(item => item.id === m.id ? {...item, name: e.target.value} : item))} />
-                  <input placeholder="Role" className="col-span-4 bg-transparent text-xs outline-none text-slate-400" value={m.role} onChange={e => setPayrollMembers(payrollMembers.map(item => item.id === m.id ? {...item, role: e.target.value} : item))} />
-                  <input placeholder="$ Pay" type="number" className="col-span-3 bg-transparent text-xs text-rose-400 font-bold outline-none text-right" value={m.pay} onChange={e => setPayrollMembers(payrollMembers.map(item => item.id === m.id ? {...item, pay: e.target.value} : item))} />
-                  <button type="button" onClick={() => setPayrollMembers(payrollMembers.filter(item => item.id !== m.id))} className="col-span-1 text-rose-500/50 hover:text-rose-500 flex justify-center"><MinusCircle size={16}/></button>
-                </div>
-              ))}
+              <div className="space-y-3 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
+                {payrollMembers.map(m => (
+                  <div key={m.id} className="grid grid-cols-12 gap-3 items-center bg-white/5 p-4 rounded-2xl border border-white/5">
+                    <input placeholder="Name" className="col-span-4 bg-transparent text-xs outline-none text-white" value={m.name} onChange={e => setPayrollMembers(payrollMembers.map(item => item.id === m.id ? {...item, name: e.target.value} : item))} />
+                    <input placeholder="Role" className="col-span-4 bg-transparent text-xs outline-none text-slate-400" value={m.role} onChange={e => setPayrollMembers(payrollMembers.map(item => item.id === m.id ? {...item, role: e.target.value} : item))} />
+                    <input placeholder="$ Pay" type="number" className="col-span-3 bg-transparent text-xs text-rose-400 font-bold outline-none text-right" value={m.pay} onChange={e => setPayrollMembers(payrollMembers.map(item => item.id === m.id ? {...item, pay: e.target.value} : item))} />
+                    <button type="button" onClick={() => setPayrollMembers(payrollMembers.filter(item => item.id !== m.id))} className="col-span-1 text-rose-500/50 hover:text-rose-500 flex justify-center transition-all"><MinusCircle size={16}/></button>
+                  </div>
+                ))}
+              </div>
             </div>
-            <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-5 rounded-2xl uppercase tracking-widest text-[10px] transition-all">Update Database</button>
+            <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-5 rounded-[2rem] uppercase tracking-widest text-[10px] transition-all shadow-xl shadow-indigo-600/20">Update Database</button>
           </form>
         </Modal>
       )}
@@ -462,10 +479,10 @@ export default function App() {
         <Modal title={`${editingExpense ? 'Edit' : 'Log'} Studio Expense`} onClose={() => setIsExpenseModalOpen(false)}>
           <form onSubmit={handleSaveExpense} className="space-y-8">
             <FormInput label="Title" name="title" defaultValue={editingExpense?.title} required />
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                <div className="space-y-1">
                 <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest ml-1">Category</label>
-                <select name="category" defaultValue={editingExpense?.category || 'Equipment'} className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-sm text-white outline-none">
+                <select name="category" defaultValue={editingExpense?.category || 'Equipment'} className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-sm text-white outline-none focus:border-rose-500 transition-all">
                   {EXPENSE_CATEGORIES.map(c => <option key={c} value={c} className="bg-[#0F172A]">{c}</option>)}
                 </select>
               </div>
@@ -473,10 +490,16 @@ export default function App() {
             </div>
             <FormInput label="Date" name="date" type="date" defaultValue={editingExpense?.date || new Date().toISOString().split('T')[0]} />
             <FormInput label="Notes" name="notes" defaultValue={editingExpense?.notes} />
-            <button type="submit" className="w-full bg-rose-600 hover:bg-rose-500 text-white font-black py-5 rounded-2xl uppercase tracking-widest text-[10px] transition-all shadow-xl shadow-rose-600/20">Log Expense</button>
+            <button type="submit" className="w-full bg-rose-600 hover:bg-rose-500 text-white font-black py-5 rounded-[2rem] uppercase tracking-widest text-[10px] transition-all shadow-xl shadow-rose-600/20">Log Expense</button>
           </form>
         </Modal>
       )}
+
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+      `}</style>
     </div>
   );
 }
@@ -497,7 +520,7 @@ function StatCard({ label, value, color, icon }) {
     amber: 'text-amber-400 bg-amber-400/5 border-amber-500/10'
   };
   return (
-    <div className={`p-6 rounded-[2rem] border ${themes[color]} shadow-lg transition-transform hover:scale-[1.02] cursor-default`}>
+    <div className={`p-6 rounded-[2.5rem] border ${themes[color]} shadow-lg transition-transform hover:scale-[1.02] cursor-default`}>
       <div className="flex justify-between items-center mb-2 text-[9px] font-black uppercase text-slate-500 tracking-widest">{label} {icon}</div>
       <div className="text-2xl font-black text-white tracking-tight">{value}</div>
     </div>
@@ -513,7 +536,7 @@ function FormInput({ label, ...props }) {
   return (
     <div className="space-y-2">
       <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest ml-1">{label}</label>
-      <input {...props} className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white focus:border-indigo-500 outline-none transition-colors placeholder:text-slate-700" />
+      <input {...props} className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white focus:border-indigo-500 outline-none transition-all placeholder:text-slate-700" />
     </div>
   );
 }
@@ -521,7 +544,7 @@ function FormInput({ label, ...props }) {
 function Modal({ title, onClose, children }) {
   return (
     <div className="fixed inset-0 bg-[#020617]/95 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-      <div className="bg-[#0F172A] border border-white/10 w-full max-w-2xl rounded-[3rem] p-10 max-h-[90vh] overflow-y-auto shadow-2xl relative">
+      <div className="bg-[#0F172A] border border-white/10 w-full max-w-2xl rounded-[3rem] p-6 md:p-10 max-h-[90vh] overflow-y-auto shadow-2xl relative custom-scrollbar">
         <div className="flex justify-between items-center mb-10">
           <h2 className="text-xl font-black text-white uppercase tracking-tighter">{title}</h2>
           <button onClick={onClose} className="p-2 text-slate-500 hover:text-white transition-all"><X /></button>
