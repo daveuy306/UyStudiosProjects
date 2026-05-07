@@ -4,7 +4,7 @@ import {
   Briefcase, BarChart3, Film, CheckCircle2, 
   TrendingUp, Users, Calendar, 
   UserPlus, MinusCircle, Database, Link as LinkIcon,
-  Receipt, Wallet, ArrowDownCircle, ArrowUpCircle
+  Receipt, Wallet, ArrowDownCircle, ArrowUpCircle, Sparkles, Loader2
 } from 'lucide-react';
 import { 
   XAxis, YAxis, Tooltip, ResponsiveContainer, 
@@ -48,15 +48,26 @@ export default function App() {
   // Modals
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   
   // Editing states
   const [editingProject, setEditingProject] = useState(null);
   const [editingExpense, setEditingExpense] = useState(null);
   const [payrollMembers, setPayrollMembers] = useState([]);
 
+  // AI State
+  const [aiInput, setAiInput] = useState('');
+  const [aiProcessing, setAiProcessing] = useState(false);
+
   useEffect(() => {
     const initAuth = async () => {
-      try { await signInAnonymously(auth); } catch (e) { console.error(e); }
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInAnonymously(auth); 
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (e) { console.error(e); }
     };
     initAuth();
     return onAuthStateChanged(auth, setUser);
@@ -71,12 +82,12 @@ export default function App() {
 
     const unsubProjects = onSnapshot(projectsRef, (snapshot) => {
       setProjects(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })));
-    });
+    }, (err) => console.error(err));
 
     const unsubExpenses = onSnapshot(expensesRef, (snapshot) => {
       setExpenses(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })));
       setLoading(false);
-    });
+    }, (err) => console.error(err));
 
     return () => {
       unsubProjects();
@@ -99,7 +110,7 @@ export default function App() {
       if (!p.date) return;
       const d = new Date(p.date);
       const m = monthNames[d.getMonth()];
-      if (!trendsObj[m]) trendsObj[m] = { name: m, revenue: 0, profit: 0 };
+      if (!trendsObj[m]) trendsObj[m] = { name: m, revenue: 0 };
       trendsObj[m].revenue += (Number(p.budget) || 0);
     });
 
@@ -166,6 +177,51 @@ export default function App() {
     setIsExpenseModalOpen(false);
   };
 
+  const handleAiSync = async () => {
+    if (!aiInput.trim()) return;
+    setAiProcessing(true);
+    const apiKey = "";
+    const systemPrompt = `You are a production data parser for UY Studios. 
+    Analyze the provided raw text (likely from a Google Doc) and extract production projects. 
+    Return a JSON object with an 'items' array. Each item MUST have:
+    - client: string (e.g. "Nike")
+    - event: string (e.g. "Commercial Shoot")
+    - date: string (YYYY-MM-DD)
+    - budget: number (numeric value only)
+    - status: string (One of: "Completed", "In Progress", "Pending")
+    Ignore non-project text. If no date is found, use today's date.`;
+
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: aiInput }] }],
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          generationConfig: { responseMimeType: "application/json" }
+        })
+      });
+      const result = await response.json();
+      const extracted = JSON.parse(result.candidates[0].content.parts[0].text);
+      
+      const projectsRef = collection(db, 'artifacts', APP_ID, 'public', 'data', 'projects');
+      for (const item of extracted.items) {
+        await addDoc(projectsRef, {
+          ...item,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          payrollMembers: []
+        });
+      }
+      setIsAiModalOpen(false);
+      setAiInput('');
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setAiProcessing(false);
+    }
+  };
+
   if (loading && !user) return <div className="min-h-screen bg-[#020617] flex items-center justify-center text-indigo-500 animate-pulse font-black uppercase tracking-widest text-xs">Syncing Studio Cloud...</div>;
 
   return (
@@ -186,8 +242,8 @@ export default function App() {
         </nav>
         <div className="p-6">
           <div className="bg-white/5 rounded-2xl p-4 border border-white/5">
-             <div className="text-[9px] font-black uppercase text-slate-500 mb-1 tracking-widest">Active Balance</div>
-             <div className="text-sm font-black text-emerald-400">${stats.netProfit.toLocaleString()}</div>
+             <div className="text-[9px] font-black uppercase text-slate-500 mb-1 tracking-widest">Net Profit</div>
+             <div className={`text-sm font-black ${stats.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>${stats.netProfit.toLocaleString()}</div>
           </div>
         </div>
       </aside>
@@ -201,24 +257,29 @@ export default function App() {
           </div>
           
           <div className="flex gap-3">
+             {activeTab === 'projects' && (
+                <button onClick={() => setIsAiModalOpen(true)} className="bg-white/5 border border-white/10 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black flex items-center gap-2 hover:bg-white/10 uppercase tracking-widest">
+                  <Sparkles size={14} className="text-indigo-400" /> Sync from Document
+                </button>
+             )}
              {activeTab === 'expenses' ? (
-                <button onClick={() => { setEditingExpense(null); setIsExpenseModalOpen(true); }} className="bg-rose-600 text-white px-6 py-2.5 rounded-2xl text-xs font-black flex items-center gap-2 hover:bg-rose-500 shadow-lg shadow-rose-600/20 uppercase tracking-tighter">
+                <button onClick={() => { setEditingExpense(null); setIsExpenseModalOpen(true); }} className="bg-rose-600 text-white px-6 py-2.5 rounded-2xl text-[10px] font-black flex items-center gap-2 hover:bg-rose-500 shadow-lg shadow-rose-600/20 uppercase tracking-widest">
                   <Plus size={16} /> LOG EXPENSE
                 </button>
              ) : (
-                <button onClick={() => { setEditingProject(null); setPayrollMembers([]); setIsProjectModalOpen(true); }} className="bg-indigo-600 text-white px-6 py-2.5 rounded-2xl text-xs font-black flex items-center gap-2 hover:bg-indigo-500 shadow-lg shadow-indigo-600/20 uppercase tracking-tighter">
+                <button onClick={() => { setEditingProject(null); setPayrollMembers([]); setIsProjectModalOpen(true); }} className="bg-indigo-600 text-white px-6 py-2.5 rounded-2xl text-[10px] font-black flex items-center gap-2 hover:bg-indigo-500 shadow-lg shadow-indigo-600/20 uppercase tracking-widest">
                   <Plus size={16} /> NEW PRODUCTION
                 </button>
              )}
           </div>
         </header>
 
-        <main className="p-4 md:p-8 space-y-8 pb-24 md:pb-8">
+        <main className="p-4 md:p-8 space-y-8">
           {activeTab === 'dashboard' && (
             <>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatCard label="Gross Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} color="indigo" icon={<TrendingUp size={16}/>} />
-                <StatCard label="Total Expenses" value={`$${stats.totalCosts.toLocaleString()}`} color="rose" icon={<ArrowDownCircle size={16}/>} />
+                <StatCard label="Total Costs" value={`$${stats.totalCosts.toLocaleString()}`} color="rose" icon={<ArrowDownCircle size={16}/>} />
                 <StatCard label="Net Profit" value={`$${stats.netProfit.toLocaleString()}`} color="emerald" icon={<CheckCircle2 size={16}/>} />
                 <StatCard label="Active Jobs" value={projects.filter(p => p.status === 'In Progress').length} color="amber" icon={<Calendar size={16}/>} />
               </div>
@@ -265,12 +326,9 @@ export default function App() {
                           </div>
                         </td>
                         <td className="px-8 py-6">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
-                              <MapPin size={12} className="text-indigo-500 opacity-50" />
-                              <span className="truncate max-w-[150px]">{p.location || 'TBD'}</span>
-                              {p.locationUrl && <a href={p.locationUrl} target="_blank" rel="noreferrer" className="text-indigo-400 hover:text-indigo-300"><LinkIcon size={12}/></a>}
-                            </div>
+                          <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                            <MapPin size={12} className="text-indigo-500 opacity-50" />
+                            <span className="truncate max-w-[150px]">{p.location || 'TBD'}</span>
                           </div>
                         </td>
                         <td className="px-8 py-6 text-right font-black text-white text-xs">
@@ -299,7 +357,6 @@ export default function App() {
                     <tr className="text-[10px] uppercase font-black tracking-widest text-slate-500 border-b border-white/5">
                       <th className="px-8 py-5">Expense Title</th>
                       <th className="px-8 py-5">Category</th>
-                      <th className="px-8 py-5">Date</th>
                       <th className="px-8 py-5 text-right">Amount</th>
                       <th className="px-8 py-5"></th>
                     </tr>
@@ -309,12 +366,11 @@ export default function App() {
                       <tr key={e.id} className="hover:bg-white/[0.02] group transition-colors">
                         <td className="px-8 py-6">
                           <div className="text-sm font-bold text-white leading-none mb-1">{e.title}</div>
-                          {e.notes && <div className="text-[10px] text-slate-500 italic">{e.notes}</div>}
+                          <div className="text-[10px] text-slate-500">{e.date}</div>
                         </td>
                         <td className="px-8 py-6">
                            <span className="text-[10px] uppercase font-black bg-white/5 px-2 py-1 rounded text-slate-400 border border-white/5">{e.category}</span>
                         </td>
-                        <td className="px-8 py-6 text-xs text-slate-400">{e.date}</td>
                         <td className="px-8 py-6 text-right font-black text-rose-400 text-xs">
                           -${(Number(e.amount) || 0).toLocaleString()}
                         </td>
@@ -333,6 +389,29 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* AI Sync Modal */}
+      {isAiModalOpen && (
+        <Modal title="Sync Productions via AI" onClose={() => setIsAiModalOpen(false)}>
+          <div className="space-y-6">
+            <p className="text-xs text-slate-400 leading-relaxed">Paste the content from your Google Doc or spreadsheet below. Our AI will automatically extract the production details and add them to your database.</p>
+            <textarea 
+              className="w-full h-64 bg-white/5 border border-white/10 rounded-2xl p-6 text-sm text-white outline-none focus:border-indigo-500 transition-colors placeholder:text-slate-700" 
+              placeholder="Paste project list here..."
+              value={aiInput}
+              onChange={e => setAiInput(e.target.value)}
+            />
+            <button 
+              onClick={handleAiSync}
+              disabled={aiProcessing || !aiInput.trim()}
+              className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-black py-5 rounded-2xl uppercase tracking-widest text-[10px] transition-all flex items-center justify-center gap-3"
+            >
+              {aiProcessing ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+              {aiProcessing ? 'Processing Data...' : 'Start Intelligent Sync'}
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {/* Project Modal */}
       {isProjectModalOpen && (
@@ -382,7 +461,7 @@ export default function App() {
       {isExpenseModalOpen && (
         <Modal title={`${editingExpense ? 'Edit' : 'Log'} Studio Expense`} onClose={() => setIsExpenseModalOpen(false)}>
           <form onSubmit={handleSaveExpense} className="space-y-8">
-            <FormInput label="Title / Description" name="title" defaultValue={editingExpense?.title} required placeholder="e.g. Memory Card 128GB" />
+            <FormInput label="Title" name="title" defaultValue={editingExpense?.title} required />
             <div className="grid grid-cols-2 gap-6">
                <div className="space-y-1">
                 <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest ml-1">Category</label>
@@ -393,7 +472,7 @@ export default function App() {
               <FormInput label="Amount ($)" name="amount" type="number" defaultValue={editingExpense?.amount} required />
             </div>
             <FormInput label="Date" name="date" type="date" defaultValue={editingExpense?.date || new Date().toISOString().split('T')[0]} />
-            <FormInput label="Notes" name="notes" defaultValue={editingExpense?.notes} placeholder="Additional details..." />
+            <FormInput label="Notes" name="notes" defaultValue={editingExpense?.notes} />
             <button type="submit" className="w-full bg-rose-600 hover:bg-rose-500 text-white font-black py-5 rounded-2xl uppercase tracking-widest text-[10px] transition-all shadow-xl shadow-rose-600/20">Log Expense</button>
           </form>
         </Modal>
@@ -442,7 +521,7 @@ function FormInput({ label, ...props }) {
 function Modal({ title, onClose, children }) {
   return (
     <div className="fixed inset-0 bg-[#020617]/95 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-      <div className="bg-[#0F172A] border border-white/10 w-full max-w-2xl rounded-[3rem] p-10 max-h-[90vh] overflow-y-auto shadow-2xl">
+      <div className="bg-[#0F172A] border border-white/10 w-full max-w-2xl rounded-[3rem] p-10 max-h-[90vh] overflow-y-auto shadow-2xl relative">
         <div className="flex justify-between items-center mb-10">
           <h2 className="text-xl font-black text-white uppercase tracking-tighter">{title}</h2>
           <button onClick={onClose} className="p-2 text-slate-500 hover:text-white transition-all"><X /></button>
