@@ -1,12 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { initializeApp, getApps } from 'firebase/app';
+import { initializeApp } from 'firebase/app';
 import { 
   getFirestore, 
-  collection, 
-  onSnapshot, 
   doc, 
-  setDoc, 
-  query
+  onSnapshot, 
+  setDoc
 } from 'firebase/firestore';
 import { 
   getAuth,
@@ -15,18 +13,27 @@ import {
   onAuthStateChanged
 } from 'firebase/auth';
 import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area,
-  BarChart, Bar, PieChart, Pie, Cell
-} from 'recharts';
-import { 
-  Plus, Trash2, Save, Download, RefreshCw, Database, 
-  TrendingUp, Users, DollarSign, Briefcase, ChevronRight,
-  Menu, X, LayoutDashboard, Settings, PieChart as PieIcon,
-  CreditCard, PlusCircle, Search, LogOut, Info, AlertCircle,
-  CloudCheck, CloudOff, Globe
+  Users, Plus, Trash2, Briefcase, 
+  AlertCircle, RefreshCcw, 
+  CheckCircle2, UserPlus, MapPin, 
+  DollarSign, ExternalLink,
+  ShieldCheck, Calendar, ShoppingCart,
+  Tag, Receipt, BarChart3, TrendingUp
 } from 'lucide-react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+  AreaChart,
+  Area
+} from 'recharts';
 
-// --- FIREBASE CONFIGURATION & INITIALIZATION ---
+// --- FIREBASE CONFIGURATION ---
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
   ? JSON.parse(__firebase_config) 
   : { apiKey: "preview", authDomain: "preview", projectId: "preview" };
@@ -34,33 +41,16 @@ const firebaseConfig = typeof __firebase_config !== 'undefined'
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'uy-studios-prod';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'uy-project-manager';
 
 const App = () => {
   const [user, setUser] = useState(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('overview');
-  const [syncStatus, setSyncStatus] = useState('connecting'); // 'connecting', 'synced', 'error'
-  
-  // --- STATE DATA ---
-  const [data, setData] = useState({
-    projects: [],
-    team: [],
-    expenses: [],
-    revenue: [
-      { month: 'Jan', amount: 0 },
-      { month: 'Feb', amount: 0 },
-      { month: 'Mar', amount: 0 },
-      { month: 'Apr', amount: 0 }
-    ],
-    settings: {
-      projectName: 'Dave Uy Database',
-      currency: 'USD'
-    }
-  });
+  const [syncStatus, setSyncStatus] = useState('connecting');
+  const [retryCount, setRetryCount] = useState(0);
+  const [projects, setProjects] = useState([]);
 
-  // --- AUTHENTICATION (RULE 3: Auth Before Queries) ---
+  // --- AUTHENTICATION ---
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -81,465 +71,565 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
-  // --- DATABASE SYNC (RULE 1 & 2: Public Data Path & Simple Query) ---
+  // --- DATABASE SYNC ---
   useEffect(() => {
     if (!user) return;
-
-    // Use specific artifact path for cross-device persistence
-    const dataDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'uy_studios_v2');
-
+    const dataDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'projects_v3');
     const unsubscribe = onSnapshot(dataDocRef, (snap) => {
       if (snap.exists()) {
-        setData(snap.data());
+        setProjects(snap.data().projects || []);
         setSyncStatus('synced');
       } else {
-        // Initialize with default if first time
         setSyncStatus('synced');
       }
     }, (err) => {
       console.error("Firestore Listen Error:", err);
       setSyncStatus('error');
     });
-
     return () => unsubscribe();
-  }, [user]);
+  }, [user, retryCount]);
 
-  const syncToCloud = async (newData) => {
-    setData(newData);
+  const syncToCloud = async (newProjects) => {
+    setProjects(newProjects);
     if (!user) return;
-    
-    setSyncStatus('connecting');
     try {
-      const dataDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'uy_studios_v2');
-      await setDoc(dataDocRef, newData);
+      const dataDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'projects_v3');
+      await setDoc(dataDocRef, { projects: newProjects }, { merge: true });
       setSyncStatus('synced');
     } catch (err) {
-      console.error("Sync failed:", err);
       setSyncStatus('error');
     }
   };
 
-  // --- HANDLERS ---
-  const addItem = (category, template) => {
-    const newItem = { ...template, id: Date.now().toString() };
-    const newData = { ...data, [category]: [...(data[category] || []), newItem] };
-    syncToCloud(newData);
-  };
-
-  const removeItem = (category, id) => {
-    const newData = { ...data, [category]: data[category].filter(item => item.id !== id) };
-    syncToCloud(newData);
-  };
-
-  const updateItem = (category, id, field, value) => {
-    const newData = {
-      ...data,
-      [category]: data[category].map(item => item.id === id ? { ...item, [field]: value } : item)
-    };
-    syncToCloud(newData);
-  };
-
-  // --- CALCULATIONS ---
-  const stats = useMemo(() => {
-    const totalSalaries = (data.team || []).reduce((acc, curr) => acc + (Number(curr.cost) || 0), 0);
-    const totalExpenses = (data.expenses || []).reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
-    const totalBurn = totalSalaries + totalExpenses;
-    const backlogValue = (data.projects || []).reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
-    const currentRevenue = data.revenue[data.revenue.length - 1]?.amount || 0;
+  // --- ANALYTICS CALCULATIONS ---
+  const chartData = useMemo(() => {
+    const months = [];
+    const now = new Date();
     
-    return { totalBurn, backlogValue, currentRevenue, profit: currentRevenue - totalBurn };
-  }, [data]);
+    // Create last 12 months
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push({
+        name: d.toLocaleString('default', { month: 'short' }),
+        fullDate: d,
+        revenue: 0,
+        owing: 0,
+        expenses: 0
+      });
+    }
 
-  if (loading) return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-slate-950">
-      <div className="relative">
-        <div className="w-16 h-16 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin"></div>
-        <Database className="w-6 h-6 text-blue-500 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+    projects.forEach(p => {
+      const budget = parseFloat(p.budget) || 0;
+      const paid = parseFloat(p.amountPaid) || 0;
+      const owing = Math.max(0, budget - paid);
+      
+      // For simplicity in this mockup, we distribute current project financials 
+      // across the "In Progress" or "Completed" months. 
+      // Real-world logic would use transaction timestamps.
+      const monthIdx = months.length - 1; 
+      months[monthIdx].revenue += paid;
+      months[monthIdx].owing += owing;
+      
+      (p.expenses || []).forEach(e => {
+        const expDate = new Date(e.date);
+        const expVal = parseFloat(e.price) || 0;
+        
+        const mIdx = months.findIndex(m => 
+          m.fullDate.getMonth() === expDate.getMonth() && 
+          m.fullDate.getFullYear() === expDate.getFullYear()
+        );
+        
+        if (mIdx !== -1) {
+          months[mIdx].expenses += expVal;
+        }
+      });
+    });
+
+    return months;
+  }, [projects]);
+
+  // --- PROJECT HANDLERS ---
+  const addProject = () => {
+    const newProject = {
+      id: crypto.randomUUID(),
+      name: 'New Project',
+      location: '',
+      budget: '',
+      amountPaid: '',
+      mapLink: '',
+      notes: '',
+      progress: 'not-started',
+      team: [],
+      expenses: []
+    };
+    syncToCloud([...projects, newProject]);
+  };
+
+  const updateProject = (projectId, updates) => {
+    const updated = projects.map(p => p.id === projectId ? { ...p, ...updates } : p);
+    syncToCloud(updated);
+  };
+
+  const removeProject = (projectId) => {
+    syncToCloud(projects.filter(p => p.id !== projectId));
+  };
+
+  // --- TEAM HANDLERS ---
+  const addTeamMember = (projectId) => {
+    const updated = projects.map(p => {
+      if (p.id === projectId) {
+        return {
+          ...p,
+          team: [...(p.team || []), { id: crypto.randomUUID(), name: '', role: '' }]
+        };
+      }
+      return p;
+    });
+    syncToCloud(updated);
+  };
+
+  const updateTeamMember = (projectId, memberId, updates) => {
+    const updated = projects.map(p => {
+      if (p.id === projectId) {
+        return {
+          ...p,
+          team: p.team.map(m => m.id === memberId ? { ...m, ...updates } : m)
+        };
+      }
+      return p;
+    });
+    syncToCloud(updated);
+  };
+
+  const removeTeamMember = (projectId, memberId) => {
+    const updated = projects.map(p => {
+      if (p.id === projectId) {
+        return {
+          ...p,
+          team: p.team.filter(m => m.id !== memberId)
+        };
+      }
+      return p;
+    });
+    syncToCloud(updated);
+  };
+
+  // --- EXPENSE HANDLERS ---
+  const addExpense = (projectId) => {
+    const updated = projects.map(p => {
+      if (p.id === projectId) {
+        return {
+          ...p,
+          expenses: [...(p.expenses || []), { 
+            id: crypto.randomUUID(), 
+            date: new Date().toISOString().split('T')[0],
+            name: '',
+            reason: '',
+            price: ''
+          }]
+        };
+      }
+      return p;
+    });
+    syncToCloud(updated);
+  };
+
+  const updateExpense = (projectId, expenseId, updates) => {
+    const updated = projects.map(p => {
+      if (p.id === projectId) {
+        return {
+          ...p,
+          expenses: p.expenses.map(e => e.id === expenseId ? { ...e, ...updates } : e)
+        };
+      }
+      return p;
+    });
+    syncToCloud(updated);
+  };
+
+  const removeExpense = (projectId, expenseId) => {
+    const updated = projects.map(p => {
+      if (p.id === projectId) {
+        return {
+          ...p,
+          expenses: p.expenses.filter(e => e.id !== expenseId)
+        };
+      }
+      return p;
+    });
+    syncToCloud(updated);
+  };
+
+  const calculateTotalExpenses = (expenses) => {
+    if (!expenses) return 0;
+    return expenses.reduce((sum, e) => sum + (parseFloat(e.price) || 0), 0);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[#0a0c10]">
+        <div className="w-12 h-12 border-2 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mb-4"></div>
+        <p className="text-slate-500 text-xs font-bold uppercase tracking-widest">Initializing Environment...</p>
       </div>
-      <span className="mt-6 text-slate-400 font-medium tracking-widest uppercase text-xs">Authenticating Session...</span>
-    </div>
-  );
+    );
+  }
 
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
-      {/* --- SIDEBAR --- */}
-      <aside className={`bg-slate-900 border-r border-slate-800 transition-all duration-300 flex flex-col z-30 ${sidebarOpen ? 'w-64' : 'w-20'}`}>
-        <div className="p-6 flex items-center gap-3 overflow-hidden">
-          <div className="bg-gradient-to-br from-blue-500 to-indigo-600 p-2 rounded-xl shrink-0 shadow-lg shadow-blue-500/20">
-            <Database className="w-6 h-6 text-white" />
-          </div>
-          {sidebarOpen && <h2 className="font-bold text-lg whitespace-nowrap tracking-tight text-white">UY Studios</h2>}
-        </div>
-
-        <nav className="flex-1 px-3 space-y-1.5 mt-4">
-          {[
-            { id: 'overview', icon: LayoutDashboard, label: 'Dashboard' },
-            { id: 'projects', icon: Briefcase, label: 'Projects' },
-            { id: 'team', icon: Users, label: 'Team' },
-            { id: 'expenses', icon: CreditCard, label: 'Expenses' },
-            { id: 'settings', icon: Settings, label: 'Settings' }
-          ].map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all duration-200 ${
-                activeTab === item.id 
-                  ? 'bg-blue-600/15 text-blue-400 shadow-inner' 
-                  : 'text-slate-500 hover:bg-slate-800 hover:text-slate-300'
+    <div className="min-h-screen bg-[#0a0c10] text-slate-200 p-4 md:p-12 font-sans">
+      <div className="max-w-7xl mx-auto">
+        
+        {/* Header */}
+        <header className="flex flex-col md:flex-row md:items-center justify-between mb-12 gap-6">
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="bg-blue-600 p-2.5 rounded-xl shadow-lg shadow-blue-600/20">
+                <Briefcase className="w-6 h-6 text-white" />
+              </div>
+              <h1 className="text-2xl font-black tracking-tight text-white uppercase">Dave Uy Dashboard</h1>
+            </div>
+            <button 
+              onClick={() => setRetryCount(c => c + 1)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all ${
+                syncStatus === 'synced' ? 'bg-emerald-500/10 text-emerald-500' : 
+                syncStatus === 'error' ? 'bg-rose-500/10 text-rose-500 animate-pulse' : 'bg-amber-500/10 text-amber-500'
               }`}
             >
-              <item.icon className={`w-5 h-5 shrink-0 ${activeTab === item.id ? 'text-blue-400' : ''}`} />
-              {sidebarOpen && <span className="font-semibold text-sm">{item.label}</span>}
-              {activeTab === item.id && sidebarOpen && <div className="ml-auto w-1.5 h-1.5 bg-blue-400 rounded-full shadow-[0_0_8px_rgba(59,130,246,0.5)]"></div>}
+              {syncStatus === 'synced' ? <CheckCircle2 className="w-3 h-3" /> : 
+               syncStatus === 'error' ? <AlertCircle className="w-3 h-3" /> : <RefreshCcw className="w-3 h-3 animate-spin" />}
+              <span className="text-[10px] font-bold uppercase tracking-tighter">
+                {syncStatus === 'synced' ? 'Cloud Connected' : syncStatus === 'error' ? 'Sync Error - Tap to Retry' : 'Connecting...'}
+              </span>
             </button>
-          ))}
-        </nav>
+          </div>
 
-        <div className="p-4 border-t border-slate-800/50">
           <button 
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="w-full flex items-center gap-4 px-4 py-3 rounded-xl text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors"
+            onClick={addProject}
+            className="flex items-center justify-center gap-2 bg-white hover:bg-slate-200 text-slate-950 px-8 py-3.5 rounded-2xl font-black transition-all active:scale-95 shadow-xl uppercase text-sm tracking-tight"
           >
-            {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-            {sidebarOpen && <span className="font-medium text-sm text-left">Hide Sidebar</span>}
+            <Plus className="w-5 h-5" />
+            <span>Add New Project</span>
           </button>
-        </div>
-      </aside>
+        </header>
 
-      {/* --- MAIN CONTENT --- */}
-      <main className="flex-1 overflow-y-auto relative flex flex-col">
-        <header className="sticky top-0 z-20 bg-slate-950/80 backdrop-blur-xl px-8 py-4 flex justify-between items-center border-b border-slate-800/50">
-          <div className="flex items-center gap-4">
+        {/* 12-Month Financial Chart */}
+        <div className="mb-12 bg-[#11141b] border border-slate-800/60 rounded-[2.5rem] p-8 shadow-2xl">
+          <div className="flex items-center justify-between mb-8">
             <div>
-              <h1 className="text-xl font-bold tracking-tight">{activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}</h1>
+              <h2 className="text-lg font-black text-white flex items-center gap-2 uppercase tracking-tight">
+                <TrendingUp className="w-5 h-5 text-blue-500" />
+                Rolling 12-Month Trend
+              </h2>
+              <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">Revenue vs Debt vs Expenses</p>
+            </div>
+            <div className="hidden md:flex gap-4">
               <div className="flex items-center gap-2">
-                 <div className={`w-1.5 h-1.5 rounded-full ${syncStatus === 'synced' ? 'bg-emerald-500' : syncStatus === 'error' ? 'bg-rose-500' : 'bg-amber-500 animate-pulse'}`}></div>
-                 <span className="text-slate-500 text-[10px] uppercase font-bold tracking-widest">
-                   {syncStatus === 'synced' ? 'Cloud Connected' : syncStatus === 'error' ? 'Sync Error' : 'Syncing...'}
-                 </span>
+                <div className="w-3 h-3 rounded-full bg-blue-500" />
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Revenue</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-rose-500" />
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Client Owing</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-emerald-500" />
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Expenses</span>
               </div>
             </div>
           </div>
           
-          <div className="flex items-center gap-4">
-            <div className="flex -space-x-2">
-              <div className="w-8 h-8 rounded-full border-2 border-slate-950 bg-blue-600 flex items-center justify-center text-[10px] font-bold">DU</div>
-              <div className="w-8 h-8 rounded-full border-2 border-slate-950 bg-slate-800 flex items-center justify-center">
-                <Globe className="w-3.5 h-3.5 text-slate-400" />
-              </div>
-            </div>
-            <div className="h-8 w-[1px] bg-slate-800"></div>
-            <div className="flex flex-col items-end">
-               <span className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">Device ID</span>
-               <span className="text-xs font-mono text-slate-300">{user?.uid.slice(0, 8) || 'anonymous'}</span>
-            </div>
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData}>
+                <defs>
+                  <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id="colorExpenses" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
+                <XAxis 
+                  dataKey="name" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{fill: '#475569', fontSize: 10, fontWeight: 700}}
+                />
+                <YAxis 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{fill: '#475569', fontSize: 10, fontWeight: 700}}
+                  tickFormatter={(val) => `$${val}`}
+                />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '12px' }}
+                  itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
+                />
+                <Area type="monotone" dataKey="revenue" stroke="#3b82f6" fillOpacity={1} fill="url(#colorRevenue)" strokeWidth={3} />
+                <Area type="monotone" dataKey="expenses" stroke="#10b981" fillOpacity={1} fill="url(#colorExpenses)" strokeWidth={3} />
+                <Line type="monotone" dataKey="owing" stroke="#f43f5e" strokeWidth={3} dot={{ r: 4 }} />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
-        </header>
+        </div>
 
-        <div className="p-8 flex-1">
-          {/* Dashboard Overview */}
-          {activeTab === 'overview' && (
-            <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                {[
-                  { label: 'Operational Burn', value: stats.totalBurn, color: 'text-rose-400', icon: TrendingUp, bg: 'bg-rose-400/5' },
-                  { label: 'Backlog Value', value: stats.backlogValue, color: 'text-blue-400', icon: Briefcase, bg: 'bg-blue-400/5' },
-                  { label: 'Current Revenue', value: stats.currentRevenue, color: 'text-emerald-400', icon: DollarSign, bg: 'bg-emerald-400/5' },
-                  { label: 'Projected Net', value: stats.profit, color: 'text-amber-400', icon: PieIcon, bg: 'bg-amber-400/5' }
-                ].map((s, idx) => (
-                  <div key={idx} className="bg-slate-900/50 border border-slate-800 p-6 rounded-2xl hover:border-slate-700 transition-colors group">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className={`p-2.5 rounded-xl ${s.bg} ${s.color} transition-transform group-hover:scale-110`}><s.icon className="w-5 h-5" /></div>
-                      <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">Monthly</span>
-                    </div>
-                    <p className="text-slate-500 text-xs font-semibold mb-1">{s.label}</p>
-                    <h3 className="text-2xl font-bold font-mono tracking-tight text-white">${s.value.toLocaleString()}</h3>
-                  </div>
-                ))}
-              </div>
-
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-                <div className="xl:col-span-2 bg-slate-900/50 border border-slate-800 p-8 rounded-3xl h-[450px]">
-                  <div className="flex justify-between items-center mb-8">
-                    <h3 className="font-bold flex items-center gap-2 text-slate-300 tracking-tight">
-                      <TrendingUp className="w-4 h-4 text-blue-500" /> Revenue vs projection
-                    </h3>
-                    <div className="flex gap-2">
-                       <div className="flex items-center gap-1.5 px-3 py-1 bg-slate-800 rounded-full text-[10px] font-bold text-slate-400">
-                          <div className="w-1.5 h-1.5 bg-blue-500 rounded-full"></div> Actual
-                       </div>
-                    </div>
-                  </div>
-                  <ResponsiveContainer width="100%" height="80%">
-                    <AreaChart data={data.revenue}>
-                      <defs>
-                        <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2}/>
-                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                      <XAxis dataKey="month" stroke="#475569" fontSize={11} tickLine={false} axisLine={false} dy={10} />
-                      <YAxis stroke="#475569" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} />
-                      <Tooltip 
-                        contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '16px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.5)' }} 
-                        itemStyle={{ color: '#3b82f6', fontWeight: 'bold' }}
-                      />
-                      <Area type="monotone" dataKey="amount" stroke="#3b82f6" strokeWidth={4} fillOpacity={1} fill="url(#colorRev)" />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-
-                <div className="bg-slate-900/50 border border-slate-800 p-8 rounded-3xl flex flex-col">
-                  <h3 className="font-bold mb-6 text-slate-300">Operational Breakdown</h3>
-                  <div className="space-y-4 flex-1">
-                    {data.expenses.slice(0, 5).map(e => (
-                      <div key={e.id} className="flex items-center justify-between p-4 bg-slate-800/30 rounded-2xl border border-slate-800/50 hover:bg-slate-800/50 transition-colors">
-                        <div className="flex items-center gap-3">
-                          <div className="w-1.5 h-8 bg-blue-600/40 rounded-full"></div>
-                          <div>
-                            <p className="font-bold text-sm text-slate-200">{e.name}</p>
-                            <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">{e.category}</p>
-                          </div>
-                        </div>
-                        <span className="font-mono font-bold text-slate-300">${Number(e.amount).toLocaleString()}</span>
-                      </div>
-                    ))}
-                    {data.expenses.length === 0 && (
-                      <div className="flex flex-col items-center justify-center h-full text-slate-600 opacity-50">
-                        <CreditCard className="w-8 h-8 mb-2" />
-                        <p className="text-xs font-bold uppercase">No records found</p>
-                      </div>
-                    )}
-                  </div>
-                  <button onClick={() => setActiveTab('expenses')} className="mt-6 w-full py-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-slate-400 transition-colors">View All Expenses</button>
-                </div>
-              </div>
+        {/* Project List */}
+        <div className="space-y-12">
+          {projects.length === 0 ? (
+            <div className="border-2 border-dashed border-slate-800/50 rounded-[2rem] p-24 flex flex-col items-center justify-center text-center">
+              <p className="font-bold text-slate-500 mb-2 uppercase tracking-widest">Workspace Empty</p>
             </div>
-          )}
+          ) : (
+            projects.map((project) => (
+              <div key={project.id} className="bg-[#11141b] border border-slate-800/60 rounded-[2rem] overflow-hidden shadow-2xl transition-all hover:border-slate-700/50">
+                
+                {/* 1. Header Strip */}
+                <div className="p-6 bg-slate-900/40 border-b border-slate-800/50 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                  <div className="flex-1 space-y-4">
+                    <div className="flex items-center gap-4">
+                      <input 
+                        className="bg-transparent border-none focus:ring-0 text-xl font-black text-white p-0 w-full placeholder:text-slate-800 uppercase"
+                        value={project.name}
+                        onChange={(e) => updateProject(project.id, { name: e.target.value })}
+                        placeholder="PROJECT NAME"
+                      />
+                      <select 
+                        value={project.progress}
+                        onChange={(e) => updateProject(project.id, { progress: e.target.value })}
+                        className={`text-[10px] font-black uppercase px-3 py-1 rounded-full border-none focus:ring-0 cursor-pointer transition-colors ${
+                          project.progress === 'completed' ? 'bg-emerald-500/20 text-emerald-400' :
+                          project.progress === 'in-progress' ? 'bg-blue-500/20 text-blue-400' : 'bg-slate-800 text-slate-400'
+                        }`}
+                      >
+                        <option value="not-started">Not Started</option>
+                        <option value="in-progress">In Progress</option>
+                        <option value="completed">Completed</option>
+                      </select>
+                    </div>
 
-          {/* Project View */}
-          {activeTab === 'projects' && (
-            <div className="space-y-6">
-              <div className="flex justify-between items-center">
-                <div>
-                   <h2 className="text-lg font-bold">Active Backlog</h2>
-                   <p className="text-sm text-slate-500">Manage deliverables and revenue streams</p>
-                </div>
-                <button 
-                  onClick={() => addItem('projects', { name: 'New Project', client: 'New Client', value: 0, status: 'Quoted' })}
-                  className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg shadow-blue-500/20 active:scale-95"
-                >
-                  <PlusCircle className="w-5 h-5" /> Add Project
-                </button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {data.projects.map(p => (
-                  <div key={p.id} className="bg-slate-900 border border-slate-800 p-6 rounded-3xl group relative overflow-hidden hover:border-blue-500/30 transition-all">
-                    <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => removeItem('projects', p.id)} className="p-2 bg-rose-500/10 text-rose-500 rounded-lg hover:bg-rose-500 hover:text-white transition-all">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <div className="mb-8">
-                      <input 
-                        className="bg-transparent border-none text-lg font-bold w-full focus:ring-0 p-0 text-white placeholder:text-slate-700"
-                        value={p.name}
-                        placeholder="Project Title"
-                        onChange={(e) => updateItem('projects', p.id, 'name', e.target.value)}
-                      />
-                      <input 
-                        className="bg-transparent border-none text-slate-500 text-xs font-bold uppercase tracking-widest w-full focus:ring-0 p-0 mt-1"
-                        value={p.client}
-                        placeholder="Client Name"
-                        onChange={(e) => updateItem('projects', p.id, 'client', e.target.value)}
-                      />
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 text-blue-400 font-mono font-bold text-lg">
-                        <span className="text-sm">$</span>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="flex items-center gap-2 bg-slate-950/40 px-3 py-2 rounded-xl border border-slate-800/50">
+                        <MapPin className="w-4 h-4 text-slate-500" />
                         <input 
-                          type="number"
-                          className="bg-transparent border-none w-24 p-0 focus:ring-0"
-                          value={p.value}
-                          onChange={(e) => updateItem('projects', p.id, 'value', e.target.value)}
+                          className="bg-transparent border-none focus:ring-0 text-xs text-slate-300 w-full p-0 placeholder:text-slate-700"
+                          value={project.location}
+                          onChange={(e) => updateProject(project.id, { location: e.target.value })}
+                          placeholder="Project Location"
                         />
                       </div>
-                      <select 
-                        className="bg-slate-800/50 border-none text-[10px] font-bold uppercase tracking-tighter rounded-full px-4 py-1.5 text-slate-400 focus:ring-0 cursor-pointer"
-                        value={p.status}
-                        onChange={(e) => updateItem('projects', p.id, 'status', e.target.value)}
-                      >
-                        <option>Active</option>
-                        <option>In Progress</option>
-                        <option>Quoted</option>
-                        <option>Completed</option>
-                      </select>
+                      <div className="flex items-center gap-2 bg-slate-950/40 px-3 py-2 rounded-xl border border-slate-800/50">
+                        <ExternalLink className="w-4 h-4 text-slate-500" />
+                        <input 
+                          className="bg-transparent border-none focus:ring-0 text-xs text-blue-400 w-full p-0 placeholder:text-slate-700"
+                          value={project.mapLink}
+                          onChange={(e) => updateProject(project.id, { mapLink: e.target.value })}
+                          placeholder="Google Maps URL"
+                        />
+                      </div>
                     </div>
                   </div>
-                ))}
-                {data.projects.length === 0 && (
-                   <div className="col-span-full border-2 border-dashed border-slate-800 rounded-3xl p-12 flex flex-col items-center justify-center text-slate-600">
-                      <Briefcase className="w-12 h-12 mb-4 opacity-20" />
-                      <p className="font-bold uppercase tracking-widest text-sm">Project pipeline empty</p>
-                      <p className="text-xs text-slate-500 mt-2">Add your first client project to start tracking revenue</p>
-                   </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Team View */}
-          {activeTab === 'team' && (
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl">
-               <div className="p-8 border-b border-slate-800 flex justify-between items-center bg-slate-900/50 backdrop-blur-sm">
-                  <div>
-                    <h3 className="font-bold text-lg">Resource Allocation</h3>
-                    <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">Personnel Cost Center</p>
-                  </div>
-                  <button onClick={() => addItem('team', { name: 'New Hire', role: 'Developer', cost: 0 })} className="bg-white text-slate-950 px-5 py-2.5 rounded-xl font-bold text-xs hover:bg-slate-200 transition-all flex items-center gap-2">
-                    <Plus className="w-4 h-4" /> Onboard Member
+                  <button onClick={() => removeProject(project.id)} className="p-3 text-slate-700 hover:text-rose-500 transition-all">
+                    <Trash2 className="w-5 h-5" />
                   </button>
-               </div>
-               <div className="overflow-x-auto">
-                 <table className="w-full text-left">
-                    <thead className="bg-slate-950/50 text-[10px] uppercase tracking-widest text-slate-500 font-black">
-                      <tr>
-                        <th className="px-8 py-5">Internal Name</th>
-                        <th className="px-8 py-5">Position</th>
-                        <th className="px-8 py-5">Allocated Cost</th>
-                        <th className="px-8 py-5 text-right">Utility</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.team.map(t => (
-                        <tr key={t.id} className="border-b border-slate-800/50 hover:bg-blue-600/5 group transition-colors">
-                          <td className="px-8 py-6">
-                            <input className="bg-transparent border-none focus:ring-0 p-0 w-full font-bold text-slate-200" value={t.name} onChange={(e) => updateItem('team', t.id, 'name', e.target.value)} />
-                          </td>
-                          <td className="px-8 py-6">
-                            <input className="bg-transparent border-none focus:ring-0 p-0 w-full text-slate-500 text-sm italic" value={t.role} onChange={(e) => updateItem('team', t.id, 'role', e.target.value)} />
-                          </td>
-                          <td className="px-8 py-6">
-                            <div className="flex items-center gap-1.5 font-mono font-bold text-emerald-400/80">
-                               <span>$</span>
-                               <input type="number" className="bg-transparent border-none focus:ring-0 p-0 w-24" value={t.cost} onChange={(e) => updateItem('team', t.id, 'cost', e.target.value)} />
-                               <span className="text-[10px] text-slate-600">/mo</span>
+                </div>
+
+                {/* 2. Content Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 min-h-[400px]">
+                  
+                  {/* Financials & Notes (Left Column) */}
+                  <div className="lg:col-span-4 p-8 border-b lg:border-b-0 lg:border-r border-slate-800/50 space-y-8 bg-slate-950/10">
+                    <div className="space-y-4">
+                      <h3 className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em]">Financial Summary</h3>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+                          <label className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Contract Budget</label>
+                          <div className="flex items-center gap-1 text-emerald-500">
+                            <DollarSign className="w-4 h-4" />
+                            <input 
+                              type="text"
+                              className="bg-transparent border-none focus:ring-0 text-lg font-black w-full p-0"
+                              value={project.budget}
+                              onChange={(e) => updateProject(project.id, { budget: e.target.value })}
+                              placeholder="0.00"
+                            />
+                          </div>
+                        </div>
+                        <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+                          <label className="text-[9px] text-slate-500 font-bold uppercase block mb-1">Amount Paid</label>
+                          <div className="flex items-center gap-1 text-blue-400">
+                            <DollarSign className="w-4 h-4" />
+                            <input 
+                              type="text"
+                              className="bg-transparent border-none focus:ring-0 text-lg font-black w-full p-0"
+                              value={project.amountPaid}
+                              onChange={(e) => updateProject(project.id, { amountPaid: e.target.value })}
+                              placeholder="0.00"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="bg-slate-950/40 p-4 rounded-2xl border border-slate-800/50 flex justify-between items-center group transition-all hover:bg-emerald-500/5">
+                        <div>
+                          <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Total Expenses</p>
+                          <p className="text-xl font-black text-white">${calculateTotalExpenses(project.expenses).toFixed(2)}</p>
+                        </div>
+                        <Receipt className="w-8 h-8 text-slate-800 group-hover:text-emerald-500/20 transition-all" />
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <h3 className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em]">Notes & Documentation</h3>
+                      <textarea 
+                        className="w-full bg-slate-900 border border-slate-800 rounded-xl p-4 text-xs text-slate-400 min-h-[140px] focus:ring-1 focus:ring-blue-500 outline-none resize-none leading-relaxed"
+                        value={project.notes}
+                        onChange={(e) => updateProject(project.id, { notes: e.target.value })}
+                        placeholder="Enter project details, file locations, or pertinent notes here..."
+                      />
+                    </div>
+                  </div>
+
+                  {/* Dynamic Sections (Right Column) */}
+                  <div className="lg:col-span-8 flex flex-col">
+                    
+                    {/* Team Section */}
+                    <div className="p-8 border-b border-slate-800/50 space-y-6">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em]">Team Members</h3>
+                        <button onClick={() => addTeamMember(project.id)} className="flex items-center gap-2 px-4 py-1.5 bg-blue-600/10 hover:bg-blue-600 text-blue-400 hover:text-white rounded-lg text-[10px] font-black uppercase transition-all">
+                          <UserPlus className="w-3.5 h-3.5" /> Add Staff
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {(project.team || []).map((member) => (
+                          <div key={member.id} className="group bg-slate-900/40 border border-slate-800/50 p-4 rounded-2xl relative hover:border-slate-700 transition-all flex justify-between items-start">
+                            <div className="flex-1 space-y-2">
+                              <input 
+                                className="w-full bg-transparent border-none focus:ring-0 text-sm font-bold text-white p-0"
+                                value={member.name}
+                                onChange={(e) => updateTeamMember(project.id, member.id, { name: e.target.value })}
+                                placeholder="Name"
+                              />
+                              <input 
+                                className="w-full bg-transparent border-none focus:ring-0 text-[11px] text-slate-500 p-0"
+                                value={member.role}
+                                onChange={(e) => updateTeamMember(project.id, member.id, { role: e.target.value })}
+                                placeholder="Role/Task"
+                              />
                             </div>
-                          </td>
-                          <td className="px-8 py-6 text-right">
-                            <button onClick={() => removeItem('team', t.id)} className="p-2 text-slate-600 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100">
-                              <Trash2 className="w-4 h-4" />
+                            <button onClick={() => removeTeamMember(project.id, member.id)} className="p-1 text-slate-800 hover:text-rose-500">
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                 </table>
-               </div>
-            </div>
-          )}
-
-          {/* Expenses View */}
-          {activeTab === 'expenses' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              <div className="lg:col-span-2 space-y-4">
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden">
-                  <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
-                    <h3 className="font-bold">Transaction History</h3>
-                    <button onClick={() => addItem('expenses', { name: 'Expense Item', category: 'SaaS', amount: 0 })} className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded-xl text-xs font-bold transition-all">Record Expense</button>
-                  </div>
-                  <div className="p-4 space-y-2">
-                    {data.expenses.map(ex => (
-                      <div key={ex.id} className="flex items-center gap-4 p-4 hover:bg-slate-800/40 rounded-2xl group border border-transparent hover:border-slate-700 transition-all">
-                         <div className="p-3 bg-slate-800 rounded-xl text-slate-400 group-hover:bg-blue-600 group-hover:text-white transition-all shadow-lg">
-                            <CreditCard className="w-5 h-5" />
-                         </div>
-                         <div className="flex-1 grid grid-cols-3 gap-4 items-center">
-                            <input className="bg-transparent border-none focus:ring-0 font-bold text-slate-200" value={ex.name} onChange={(e) => updateItem('expenses', ex.id, 'name', e.target.value)} />
-                            <input className="bg-transparent border-none focus:ring-0 text-[10px] text-slate-500 uppercase font-black tracking-widest" value={ex.category} onChange={(e) => updateItem('expenses', ex.id, 'category', e.target.value)} />
-                            <div className="flex items-center justify-end font-mono font-bold text-rose-400">
-                               <span className="text-xs mr-1">$</span>
-                               <input type="number" className="bg-transparent border-none focus:ring-0 w-20 text-right p-0" value={ex.amount} onChange={(e) => updateItem('expenses', ex.id, 'amount', e.target.value)} />
-                            </div>
-                         </div>
-                         <button onClick={() => removeItem('expenses', ex.id)} className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-rose-500 p-2"><X className="w-4 h-4" /></button>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <div className="space-y-6">
-                <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-8 rounded-3xl shadow-xl shadow-blue-500/10">
-                   <h3 className="font-bold text-white mb-2">Total Monthly Burn</h3>
-                   <h2 className="text-4xl font-black text-white mb-6">${stats.totalBurn.toLocaleString()}</h2>
-                   <div className="space-y-4">
-                      <div className="flex justify-between text-[10px] uppercase font-black tracking-widest text-blue-200/60">
-                         <span>Efficiency Score</span>
-                         <span>84%</span>
-                      </div>
-                      <div className="w-full bg-blue-900/50 h-2 rounded-full overflow-hidden">
-                         <div className="bg-white h-full w-[84%] rounded-full"></div>
-                      </div>
-                   </div>
-                </div>
-                <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl">
-                   <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Financial Guardrail</p>
-                   <p className="text-sm text-slate-400 italic leading-relaxed">
-                     Automated alerts are enabled. You will be notified via cloud-sync if monthly expenses exceed 80% of average revenue.
-                   </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Settings View */}
-          {activeTab === 'settings' && (
-            <div className="max-w-3xl space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl shadow-xl">
-                <h3 className="text-lg font-bold mb-8 flex items-center gap-2"><Globe className="w-5 h-5 text-blue-500" /> Database Configuration</h3>
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Organization Label</label>
-                    <input 
-                      className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none font-bold"
-                      value={data.settings.projectName}
-                      onChange={(e) => syncToCloud({ ...data, settings: { ...data.settings, projectName: e.target.value }})}
-                    />
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Currency Locale</label>
-                      <select className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 focus:ring-2 focus:ring-blue-500 outline-none font-bold text-slate-300 appearance-none">
-                        <option>USD ($)</option>
-                        <option>EUR (€)</option>
-                        <option>GBP (£)</option>
-                      </select>
                     </div>
-                    <div>
-                       <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Sync Strategy</label>
-                       <div className="w-full bg-blue-600/10 border border-blue-500/20 rounded-2xl p-4 flex items-center justify-between text-blue-400">
-                          <span className="text-xs font-bold uppercase tracking-widest">Real-time Cloud</span>
-                          <CloudCheck className="w-5 h-5" />
-                       </div>
+
+                    {/* Expenses Section */}
+                    <div className="p-8 space-y-6 flex-1 bg-slate-900/20">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em]">Project Ledger</h3>
+                        <button onClick={() => addExpense(project.id)} className="flex items-center gap-2 px-4 py-1.5 bg-emerald-600/10 hover:bg-emerald-600 text-emerald-400 hover:text-white rounded-lg text-[10px] font-black uppercase transition-all">
+                          <ShoppingCart className="w-3.5 h-3.5" /> Log Expense
+                        </button>
+                      </div>
+
+                      <div className="space-y-3">
+                        {(project.expenses || []).length === 0 ? (
+                          <div className="py-12 border-2 border-dashed border-slate-800/30 rounded-2xl flex flex-col items-center justify-center text-slate-700">
+                            <ShoppingCart className="w-6 h-6 mb-2 opacity-20" />
+                            <span className="text-[9px] font-black uppercase tracking-widest">No expenses logged</span>
+                          </div>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left border-separate border-spacing-y-2">
+                              <thead>
+                                <tr className="text-[9px] font-black text-slate-700 uppercase tracking-widest">
+                                  <th className="pb-2 pl-4">Date</th>
+                                  <th className="pb-2">Expense Name</th>
+                                  <th className="pb-2">Description</th>
+                                  <th className="pb-2">Price</th>
+                                  <th className="pb-2 text-right pr-4">Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {project.expenses.map((exp) => (
+                                  <tr key={exp.id} className="bg-slate-950/60 border border-slate-800/50 group transition-all hover:bg-slate-900">
+                                    <td className="py-3 pl-4 rounded-l-xl">
+                                      <div className="flex items-center gap-2">
+                                        <Calendar className="w-3 h-3 text-slate-600" />
+                                        <input 
+                                          type="date"
+                                          className="bg-transparent border-none focus:ring-0 text-xs text-slate-400 p-0"
+                                          value={exp.date}
+                                          onChange={(e) => updateExpense(project.id, exp.id, { date: e.target.value })}
+                                        />
+                                      </div>
+                                    </td>
+                                    <td>
+                                      <input 
+                                        className="bg-transparent border-none focus:ring-0 text-xs font-bold text-white w-full p-0"
+                                        value={exp.name}
+                                        onChange={(e) => updateExpense(project.id, exp.id, { name: e.target.value })}
+                                        placeholder="Item Name"
+                                      />
+                                    </td>
+                                    <td>
+                                      <div className="flex items-center gap-2">
+                                        <Tag className="w-3 h-3 text-slate-700" />
+                                        <input 
+                                          className="bg-transparent border-none focus:ring-0 text-[11px] text-slate-500 w-full p-0"
+                                          value={exp.reason}
+                                          onChange={(e) => updateExpense(project.id, exp.id, { reason: e.target.value })}
+                                          placeholder="Category/Reason"
+                                        />
+                                      </div>
+                                    </td>
+                                    <td>
+                                      <div className="flex items-center gap-1 text-emerald-500 font-bold text-xs">
+                                        <span>$</span>
+                                        <input 
+                                          className="bg-transparent border-none focus:ring-0 text-xs font-black w-20 p-0"
+                                          value={exp.price}
+                                          onChange={(e) => updateExpense(project.id, exp.id, { price: e.target.value })}
+                                          placeholder="0.00"
+                                        />
+                                      </div>
+                                    </td>
+                                    <td className="py-3 pr-4 text-right rounded-r-xl">
+                                      <button onClick={() => removeExpense(project.id, exp.id)} className="p-1.5 text-slate-800 hover:text-rose-500 transition-colors">
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-
-              <div className="p-8 bg-rose-500/5 border border-rose-500/20 rounded-3xl flex items-start gap-4">
-                 <div className="p-3 bg-rose-500/10 rounded-2xl text-rose-500"><AlertCircle className="w-6 h-6" /></div>
-                 <div>
-                    <h4 className="font-bold text-rose-400">Data Persistence Warning</h4>
-                    <p className="text-xs text-rose-500/70 mt-1 leading-relaxed">
-                      This database is currently hosted in a public artifact partition. Ensure you do not store sensitive bank credentials or PII. For enterprise isolation, please request a private vault upgrade.
-                    </p>
-                 </div>
-              </div>
-            </div>
+            ))
           )}
         </div>
-      </main>
+
+        {/* Footer */}
+        <footer className="mt-32 pt-8 border-t border-slate-900 flex flex-col md:flex-row items-center justify-between gap-6 opacity-40">
+           <div className="flex items-center gap-3 text-slate-500">
+              <ShieldCheck className="w-5 h-5" />
+              <div className="text-[9px] font-black uppercase tracking-[0.2em] space-y-0.5">
+                <div>Secure Portfolio Node</div>
+                <div className="text-slate-700">UID: {user?.uid?.slice(0, 8)}...</div>
+              </div>
+           </div>
+           <p className="text-[10px] font-black text-slate-700 uppercase tracking-[0.3em]">UY Studios • 12-Month Financial Ledger</p>
+        </footer>
+      </div>
     </div>
   );
 };
