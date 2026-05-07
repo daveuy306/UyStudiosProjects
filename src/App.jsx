@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { initializeApp, getApps, getApp } from 'firebase/app';
+import { initializeApp, getApps } from 'firebase/app';
 import { 
   getFirestore, 
   doc, 
   onSnapshot, 
-  setDoc,
-  collection
+  setDoc
 } from 'firebase/firestore';
 import { 
   getAuth,
@@ -15,9 +14,7 @@ import {
 } from 'firebase/auth';
 import { 
   Users, Plus, Trash2, Briefcase, 
-  MapPin, DollarSign, ExternalLink,
-  ShieldCheck, ShoppingCart, Tag, 
-  BarChart3, Activity, X, Link as LinkIcon,
+  MapPin, DollarSign, Activity, X,
   FileText, ChevronLeft, ChevronRight,
   LayoutDashboard, FolderKanban, Settings,
   Clock, TrendingUp, AlertCircle
@@ -32,17 +29,12 @@ import {
   Area
 } from 'recharts';
 
-// --- Initialization Logic ---
-const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'uy-studios-pm';
-
-// Initialize Firebase services outside component to prevent re-init
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-
 const App = () => {
   const [user, setUser] = useState(null);
+  const [db, setDb] = useState(null);
+  const [auth, setAuth] = useState(null);
+  const [appId, setAppId] = useState('uy-studios-pm');
+  
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const [syncStatus, setSyncStatus] = useState('connecting');
   const [projects, setProjects] = useState([]);
@@ -50,44 +42,60 @@ const App = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   
   const [newProject, setNewProject] = useState({
-    name: '',
-    location: '',
-    budget: '',
-    amountPaid: '',
-    mapLink: '',
-    filesLink: '',
-    notes: '',
-    teamMember: '',
-    teamRole: ''
+    name: '', location: '', budget: '', amountPaid: '', 
+    mapLink: '', filesLink: '', notes: '', teamMember: '', teamRole: ''
   });
 
-  // Authentication Sequence (Rule 3)
+  // Safe Initialization (Rule 3 Fix)
   useEffect(() => {
-    const initAuth = async () => {
+    const initFirebase = async () => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
+        // Check if config exists and has an apiKey
+        const rawConfig = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
+        if (!rawConfig) {
+          setSyncStatus('no-config');
+          return;
         }
+
+        const firebaseConfig = JSON.parse(rawConfig);
+        if (!firebaseConfig.apiKey) {
+          setSyncStatus('invalid-key');
+          return;
+        }
+
+        const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
+        const firestoreInstance = getFirestore(app);
+        const authInstance = getAuth(app);
+        const currentAppId = typeof __app_id !== 'undefined' ? __app_id : 'uy-studios-pm';
+
+        setDb(firestoreInstance);
+        setAuth(authInstance);
+        setAppId(currentAppId);
+
+        // Auth Sequence
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(authInstance, __initial_auth_token);
+        } else {
+          await signInAnonymously(authInstance);
+        }
+
+        onAuthStateChanged(authInstance, (u) => {
+          setUser(u);
+        });
+
       } catch (err) {
-        console.error("Auth Error:", err);
-        setSyncStatus('offline');
+        console.error("Firebase Init Error:", err);
+        setSyncStatus('error');
       }
     };
 
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-    });
-    return () => unsubscribe();
+    initFirebase();
   }, []);
 
-  // Data Fetching (Rule 1 & 2)
+  // Data Fetching (Rule 1)
   useEffect(() => {
-    if (!user) return;
+    if (!user || !db) return;
     
-    // Path follows Rule 1: /artifacts/{appId}/public/data/{collectionName}
     const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'pm_projects_v2');
     
     const unsubscribe = onSnapshot(docRef, (snap) => {
@@ -96,15 +104,15 @@ const App = () => {
       }
       setSyncStatus('synced');
     }, (err) => {
-      console.error("Firestore Error:", err);
+      console.error("Firestore Listen Error:", err);
       setSyncStatus('error');
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, db, appId]);
 
   const saveToCloud = async (updated) => {
-    if (!user) return;
+    if (!user || !db) return;
     try {
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'pm_projects_v2'), { 
         projects: updated,
@@ -146,13 +154,8 @@ const App = () => {
   }, [projects]);
 
   const trendData = [
-    { name: 'Mon', val: 2400 },
-    { name: 'Tue', val: 1398 },
-    { name: 'Wed', val: 9800 },
-    { name: 'Thu', val: 3908 },
-    { name: 'Fri', val: 4800 },
-    { name: 'Sat', val: 3800 },
-    { name: 'Sun', val: 4300 },
+    { name: 'Mon', val: 2400 }, { name: 'Tue', val: 1398 }, { name: 'Wed', val: 9800 },
+    { name: 'Thu', val: 3908 }, { name: 'Fri', val: 4800 }, { name: 'Sat', val: 3800 }, { name: 'Sun', val: 4300 },
   ];
 
   return (
@@ -205,7 +208,7 @@ const App = () => {
               syncStatus === 'synced' ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-500' : 'bg-amber-500/5 border-amber-500/20 text-amber-500'
             }`}>
               <div className={`w-1.5 h-1.5 rounded-full ${syncStatus === 'synced' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
-              {syncStatus === 'synced' ? 'System Synced' : 'Connecting...'}
+              {syncStatus === 'synced' ? 'System Synced' : syncStatus === 'connecting' ? 'Establishing Link...' : 'Manual Mode'}
             </div>
           </div>
 
