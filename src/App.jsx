@@ -1,210 +1,330 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  LayoutDashboard, Briefcase, BarChart3, Search, Zap, 
-  PlusCircle, Camera, Clock, Wallet, TrendingUp, 
-  MapPin, Sparkles, FileText, UserPlus, Calendar, 
-  Settings, Edit3, Trash2, X, Check, ChevronLeft, ChevronRight, Plus
+  Plus, Search, Edit2, Trash2, X, Camera, 
+  DollarSign, CheckCircle2, Clock, 
+  AlertCircle, Package as PackageIcon, 
+  Wallet, Film, Wifi, WifiOff, LayoutDashboard,
+  Layers, BarChart3, Settings, LogOut, ChevronRight
 } from 'lucide-react';
 
-// --- Note: This version uses local state. ---
-// You can add the Firebase logic later once the basic build is running!
+// Firebase Imports
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { 
+  getFirestore, collection, onSnapshot, addDoc, 
+  updateDoc, deleteDoc, doc, query 
+} from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+
+/**
+ * UY STUDIOS 2025 - PRODUCTION DATABASE CONFIG
+ */
+const firebaseConfig = {
+  apiKey: "AIzaSyAiSo4QbPqEOX-bTvbE7BjHtOY78_fTHpY",
+  authDomain: "uystudiosprojectdatabase.firebaseapp.com",
+  projectId: "uystudiosprojectdatabase",
+  storageBucket: "uystudiosprojectdatabase.firebasestorage.app",
+  messagingSenderId: "167809203911",
+  appId: "1:167809203911:web:9b72b71460cfd92ab8c8e2",
+  measurementId: "G-8R4PKT6WM4"
+};
+
+// Initialize Firebase safely
+const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
 const STATUS_OPTIONS = ['Completed', 'In Progress', 'Pending', 'Cancelled'];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [projects, setProjects] = useState([
-    { id: 1, date: '2024-10-24', client: 'Alice Johnson', event: 'Wedding', package: 'Premium', location: 'New York', budget: 5000, paid: 2500, status: 'In Progress' },
-    { id: 2, date: '2024-11-12', client: 'Bob Smith', event: 'Corporate Gala', package: 'Standard', location: 'Chicago', budget: 8000, paid: 8000, status: 'Completed' }
-  ]);
+  const [projects, setProjects] = useState([]);
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [isOnline, setIsOnline] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProject, setEditingProject] = useState(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Authentication Setup
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        await signInAnonymously(auth);
+      } catch (err) {
+        console.error("Auth Error:", err);
+        setError("Database Auth Failed. Check Firebase Settings.");
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (u) => setUser(u));
+    return () => unsubscribe();
+  }, []);
+
+  // Real-time Cloud Sync
+  useEffect(() => {
+    if (!user) return;
+    
+    // Listening to the 'projects' collection in your cloud database
+    const colRef = collection(db, 'projects');
+    
+    const unsubscribe = onSnapshot(colRef, 
+      (snapshot) => {
+        const data = snapshot.docs.map(doc => ({
+          ...doc.data(),
+          id: doc.id
+        }));
+        setProjects(data);
+        setLoading(false);
+        setIsOnline(true);
+      }, 
+      (err) => {
+        console.error("Firestore Sync Error:", err);
+        setError("Sync Access Denied. Check Firestore Rules.");
+        setLoading(false);
+        setIsOnline(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user]);
+
+  const handleSaveProject = async (projectData) => {
+    if (!user) return;
+    try {
+      if (editingProject) {
+        const docRef = doc(db, 'projects', editingProject.id);
+        await updateDoc(docRef, projectData);
+      } else {
+        await addDoc(collection(db, 'projects'), { 
+          ...projectData, 
+          createdAt: new Date().toISOString(),
+          ownerId: user.uid
+        });
+      }
+      setIsModalOpen(false);
+      setEditingProject(null);
+    } catch (e) {
+      setError("Failed to save to cloud.");
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!user || !window.confirm("Delete this project forever?")) return;
+    try {
+      await deleteDoc(doc(db, 'projects', id));
+    } catch (e) {
+      console.error("Delete Error:", e);
+    }
+  };
 
   const stats = useMemo(() => {
     const totalBudget = projects.reduce((sum, p) => sum + (Number(p.budget) || 0), 0);
     const totalPaid = projects.reduce((sum, p) => sum + (Number(p.paid) || 0), 0);
+    const outstanding = totalBudget - totalPaid;
     const active = projects.filter(p => p.status === 'In Progress').length;
-    return { totalBudget, totalPaid, outstanding: totalBudget - totalPaid, active };
+    return { totalBudget, totalPaid, outstanding, active };
   }, [projects]);
 
   const filteredProjects = useMemo(() => {
     return projects.filter(p => 
-      (p.client?.toLowerCase() || "").includes(searchTerm.toLowerCase()) ||
-      (p.event?.toLowerCase() || "").includes(searchTerm.toLowerCase())
-    );
+      (p.client?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+      (p.event?.toLowerCase() || '').includes(searchTerm.toLowerCase())
+    ).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }, [projects, searchTerm]);
 
-  const handleSave = (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    const data = Object.fromEntries(fd.entries());
-    const projectData = {
-      ...data,
-      id: editingProject ? editingProject.id : Date.now(),
-      budget: Number(data.budget),
-      paid: Number(data.paid)
-    };
-
-    if (editingProject) {
-      setProjects(projects.map(p => p.id === editingProject.id ? projectData : p));
-    } else {
-      setProjects([projectData, ...projects]);
-    }
-    setIsModalOpen(false);
-    setEditingProject(null);
-  };
-
-  const handleDelete = (id) => {
-    if (!window.confirm("Delete this project?")) return;
-    setProjects(projects.filter(p => p.id !== id));
-  };
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#020617]">
+        <div className="text-center space-y-6">
+          <div className="w-16 h-16 bg-indigo-600 rounded-2xl mx-auto flex items-center justify-center text-white animate-bounce shadow-2xl shadow-indigo-500/40">
+             <Film size={32} />
+          </div>
+          <p className="text-slate-500 font-bold uppercase tracking-[0.4em] text-[10px]">Loading Uy Studios Cloud...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex min-h-screen bg-slate-950 text-slate-200">
-      {/* Sidebar */}
-      <aside className={`bg-slate-900 border-r border-slate-800 transition-all duration-300 flex flex-col fixed inset-y-0 left-0 z-50 ${sidebarOpen ? 'w-64' : 'w-20'}`}>
-        <div className="h-16 flex items-center px-6 border-b border-slate-800 mb-4">
-          <div className="w-8 h-8 bg-indigo-600 rounded flex items-center justify-center text-white shrink-0">
-            <Zap size={20} />
+    <div className="min-h-screen bg-[#020617] text-slate-200 flex">
+      {/* Sidebar - Desktop Only */}
+      <aside className="w-64 border-r border-white/5 bg-[#020617] hidden lg:flex flex-col p-6 sticky top-0 h-screen">
+        <div className="flex items-center gap-3 mb-12 px-2">
+          <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-black">
+            <Film size={16} />
           </div>
-          {sidebarOpen && <h1 className="ml-3 font-serif font-bold text-xl tracking-tight text-white">StudioPro</h1>}
+          <h1 className="font-black tracking-tighter text-white text-lg">UY STUDIOS</h1>
         </div>
-        <nav className="flex-1">
-          <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-6 py-3.5 transition-all text-sm font-medium ${activeTab === 'dashboard' ? 'bg-indigo-500/10 text-indigo-400 border-r-2 border-indigo-500' : 'text-slate-400 hover:text-slate-200'}`}>
-            <LayoutDashboard size={20} /> {sidebarOpen && "Dashboard"}
-          </button>
-          <button onClick={() => setActiveTab('projects')} className={`w-full flex items-center gap-3 px-6 py-3.5 transition-all text-sm font-medium ${activeTab === 'projects' ? 'bg-indigo-500/10 text-indigo-400 border-r-2 border-indigo-500' : 'text-slate-400 hover:text-slate-200'}`}>
-            <Briefcase size={20} /> {sidebarOpen && "Projects"}
-          </button>
+
+        <nav className="space-y-1 flex-1">
+          <NavItem icon={<LayoutDashboard size={18}/>} label="Dashboard" active />
+          <NavItem icon={<Layers size={18}/>} label="Projects" />
+          <NavItem icon={<BarChart3 size={18}/>} label="Financials" />
+          <NavItem icon={<Settings size={18}/>} label="Settings" />
         </nav>
-        <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-4 flex justify-center text-slate-500 hover:text-white">
-          {sidebarOpen ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
-        </button>
+
+        <div className="pt-6 border-t border-white/5">
+          <div className="flex items-center gap-3 px-3 py-2">
+            <div className="w-8 h-8 rounded-full bg-indigo-600/20 flex items-center justify-center text-indigo-400 font-bold text-xs">US</div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] font-black text-white uppercase truncate">UY Administrator</p>
+              <p className="text-[9px] text-slate-500 truncate">{user?.uid.substring(0, 8)}...</p>
+            </div>
+          </div>
+        </div>
       </aside>
 
-      {/* Main Content Area */}
-      <div className={`flex-1 transition-all duration-300 ${sidebarOpen ? 'ml-64' : 'ml-20'}`}>
-        <header className="h-16 bg-slate-950/50 backdrop-blur-md border-b border-slate-800 px-8 flex items-center justify-between sticky top-0 z-40">
-          <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest">{activeTab}</h2>
-          <div className="flex items-center gap-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+      {/* Main Container */}
+      <div className="flex-1 flex flex-col min-w-0">
+        <header className="h-20 border-b border-white/5 px-8 flex items-center justify-between sticky top-0 z-40 bg-[#020617]/80 backdrop-blur-md">
+          <div className="flex items-center gap-4 lg:hidden">
+            <Film className="text-white" size={24} />
+            <h1 className="font-black tracking-tighter text-white">UY STUDIOS</h1>
+          </div>
+
+          <div className="flex-1 max-w-xl mx-4">
+            <div className="relative group">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-indigo-400 transition-colors" size={16} />
               <input 
-                type="text" placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-1.5 bg-slate-900 border border-slate-800 rounded-full text-sm w-48 focus:w-64 transition-all outline-none"
+                type="text" 
+                placeholder="Search production data..." 
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-11 pr-4 py-2.5 bg-white/5 border border-white/5 rounded-2xl text-sm outline-none focus:bg-white/10 focus:border-indigo-500/50 transition-all text-white"
               />
             </div>
           </div>
+
+          <div className="flex items-center gap-4">
+             <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-full border border-white/5">
+                <div className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></div>
+                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{isOnline ? 'Online' : 'Offline'}</span>
+             </div>
+             <button 
+              onClick={() => { setEditingProject(null); setIsModalOpen(true); }}
+              className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-black flex items-center gap-2 transition-all shadow-xl shadow-indigo-600/20 active:scale-95"
+            >
+              <Plus size={16} strokeWidth={3} /> <span className="hidden sm:inline">NEW JOB</span>
+            </button>
+          </div>
         </header>
 
-        <main className="p-8 max-w-7xl mx-auto">
-          {activeTab === 'dashboard' ? (
-            <div className="space-y-8">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                <StatCard label="Pipeline" value={`$${stats.totalBudget}`} icon={<TrendingUp size={20}/>} color="indigo" />
-                <StatCard label="Paid" value={`$${stats.totalPaid}`} icon={<Wallet size={20}/>} color="emerald" />
-                <StatCard label="Balance" value={`$${stats.outstanding}`} icon={<Clock size={20}/>} color="rose" />
-                <StatCard label="Active" value={stats.active} icon={<Camera size={20}/>} color="amber" />
-              </div>
-              
-              <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6">
-                <div className="flex justify-between items-center mb-6">
-                  <h3 className="font-bold text-lg">Recent Bookings</h3>
-                  <button onClick={() => {setEditingProject(null); setIsModalOpen(true)}} className="text-indigo-400 text-sm font-bold flex items-center gap-1 hover:underline">
-                    <Plus size={14}/> Add New
-                  </button>
-                </div>
-                <div className="space-y-3">
-                  {projects.slice(0, 5).map(p => (
-                    <div key={p.id} className="flex items-center justify-between p-4 bg-slate-800/30 rounded-xl border border-slate-800 hover:border-slate-700 transition-all">
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-indigo-400 border border-slate-700 font-bold text-xs uppercase">
-                          {p.date?.split('-')[1] || '??'}
-                        </div>
-                        <div>
-                          <p className="font-bold text-sm text-white">{p.client}</p>
-                          <p className="text-xs text-slate-500">{p.event} · {p.location}</p>
-                        </div>
-                      </div>
-                      <StatusBadge status={p.status} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden">
-               <table className="w-full text-left">
-                  <thead className="bg-slate-800/50 border-b border-slate-800 text-[10px] font-bold uppercase text-slate-500">
-                    <tr>
-                      <th className="px-6 py-4">Client</th>
-                      <th className="px-6 py-4">Event</th>
-                      <th className="px-6 py-4">Budget</th>
-                      <th className="px-6 py-4">Status</th>
-                      <th className="px-6 py-4 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800">
-                    {filteredProjects.map(p => (
-                      <tr key={p.id} className="hover:bg-slate-800/20 group">
-                        <td className="px-6 py-4 font-medium text-white">{p.client}</td>
-                        <td className="px-6 py-4 text-slate-400 text-sm">{p.event}</td>
-                        <td className="px-6 py-4 text-sm">${p.budget}</td>
-                        <td className="px-6 py-4"><StatusBadge status={p.status} /></td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex justify-end gap-2">
-                            <button onClick={() => {setEditingProject(p); setIsModalOpen(true)}} className="p-1.5 hover:bg-indigo-500/10 text-slate-500 hover:text-indigo-400 rounded"><Edit3 size={14}/></button>
-                            <button onClick={() => handleDelete(p.id)} className="p-1.5 hover:bg-rose-500/10 text-slate-500 hover:text-rose-400 rounded"><Trash2 size={14}/></button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-               </table>
+        <main className="p-4 sm:p-8 space-y-8">
+          {error && (
+            <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center gap-3 text-rose-400 text-xs font-bold">
+              <AlertCircle size={16} /> {error}
             </div>
           )}
+
+          {/* Stats Bar */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+            <SummaryCard label="Pipeline" value={`$${stats.totalBudget.toLocaleString()}`} icon={<DollarSign size={18}/>} color="indigo" />
+            <SummaryCard label="Paid" value={`$${stats.totalPaid.toLocaleString()}`} icon={<CheckCircle2 size={18}/>} color="emerald" />
+            <SummaryCard label="Balance" value={`$${stats.outstanding.toLocaleString()}`} icon={<Wallet size={18}/>} color="rose" />
+            <SummaryCard label="Active" value={stats.active} icon={<Clock size={18}/>} color="amber" />
+          </div>
+
+          {/* Project List */}
+          <section className="bg-white/5 border border-white/5 rounded-[2rem] overflow-hidden">
+            <div className="px-8 py-6 border-b border-white/5 flex items-center justify-between">
+              <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Recent Productions</h2>
+              <div className="text-[9px] font-bold text-slate-600 uppercase">Showing {filteredProjects.length} entries</div>
+            </div>
+            
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                    <th className="px-8 py-5">Production</th>
+                    <th className="px-8 py-5">Status</th>
+                    <th className="px-8 py-5 text-right">Financials</th>
+                    <th className="px-8 py-5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {filteredProjects.map((p) => (
+                    <tr key={p.id} className="hover:bg-white/[0.02] transition-colors group">
+                      <td className="px-8 py-6">
+                        <div className="font-bold text-white leading-tight">{p.client}</div>
+                        <div className="text-xs text-slate-500 mt-1 flex items-center gap-2 uppercase tracking-tighter">
+                          <Film size={10} /> {p.event}
+                        </div>
+                      </td>
+                      <td className="px-8 py-6">
+                        <StatusPill status={p.status} />
+                      </td>
+                      <td className="px-8 py-6 text-right">
+                        <div className="text-sm font-black text-slate-200">${Number(p.budget).toLocaleString()}</div>
+                        <div className="text-[10px] font-bold text-emerald-500/70 mt-0.5">Paid: ${Number(p.paid).toLocaleString()}</div>
+                      </td>
+                      <td className="px-8 py-6 text-right">
+                        <div className="flex gap-2 justify-end opacity-0 group-hover:opacity-100 transition-all translate-x-2 group-hover:translate-x-0">
+                          <button onClick={() => {setEditingProject(p); setIsModalOpen(true);}} className="p-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded-xl transition-all">
+                            <Edit2 size={14} />
+                          </button>
+                          <button onClick={() => handleDelete(p.id)} className="p-2.5 bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 rounded-xl transition-all">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {filteredProjects.length === 0 && (
+                    <tr>
+                      <td colSpan="4" className="px-8 py-24 text-center">
+                        <div className="w-16 h-16 bg-white/5 rounded-3xl mx-auto flex items-center justify-center text-slate-700 mb-4">
+                          <PackageIcon size={32} />
+                        </div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-600">No project data available</p>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
         </main>
       </div>
 
       {/* Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
-          <div className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
-            <div className="p-6 border-b border-slate-800 flex justify-between items-center">
-              <h2 className="font-bold text-lg text-white">{editingProject ? 'Edit Project' : 'New Project'}</h2>
-              <button onClick={() => setIsModalOpen(false)}><X size={20}/></button>
+        <div className="fixed inset-0 bg-[#020617]/90 backdrop-blur-sm flex items-center justify-center p-6 z-[100] animate-in fade-in duration-200">
+          <div className="bg-[#0F172A] border border-white/10 rounded-[2.5rem] shadow-2xl w-full max-w-lg overflow-hidden">
+            <div className="px-8 py-6 border-b border-white/5 flex justify-between items-center bg-white/[0.01]">
+              <h2 className="text-xl font-black text-white uppercase tracking-tighter">{editingProject ? 'Edit Production' : 'Initialize Job'}</h2>
+              <button onClick={() => setIsModalOpen(false)} className="text-slate-500 hover:text-white"><X size={20}/></button>
             </div>
-            <form onSubmit={handleSave} className="p-6 grid grid-cols-2 gap-4">
-              <div className="col-span-2">
-                <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Client Name</label>
-                <input name="client" defaultValue={editingProject?.client} required className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-indigo-500" />
+            
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const fd = new FormData(e.target);
+              handleSaveProject({
+                client: fd.get('client'),
+                event: fd.get('event'),
+                budget: Number(fd.get('budget')),
+                paid: Number(fd.get('paid')),
+                status: fd.get('status')
+              });
+            }} className="p-8 space-y-5">
+              <div className="grid gap-5 sm:grid-cols-2">
+                <InputField label="Client Name" name="client" defaultValue={editingProject?.client} placeholder="John Doe" />
+                <InputField label="Project Type" name="event" defaultValue={editingProject?.event} placeholder="Music Video" />
               </div>
-              <div className="col-span-2 sm:col-span-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Event</label>
-                <input name="event" defaultValue={editingProject?.event} required className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-indigo-500" />
+              
+              <div className="grid grid-cols-2 gap-5">
+                <InputField label="Budget ($)" name="budget" type="number" defaultValue={editingProject?.budget} />
+                <InputField label="Paid ($)" name="paid" type="number" defaultValue={editingProject?.paid} />
               </div>
-              <div className="col-span-2 sm:col-span-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Location</label>
-                <input name="location" defaultValue={editingProject?.location} required className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-indigo-500" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Budget ($)</label>
-                <input name="budget" type="number" defaultValue={editingProject?.budget} required className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-indigo-500" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Paid ($)</label>
-                <input name="paid" type="number" defaultValue={editingProject?.paid} required className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-indigo-500" />
-              </div>
-              <div className="col-span-2">
-                <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Status</label>
-                <select name="status" defaultValue={editingProject?.status || 'Pending'} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-sm outline-none">
-                  {STATUS_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+
+              <div className="space-y-2">
+                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">Status</label>
+                <select name="status" defaultValue={editingProject?.status || 'Pending'} className="w-full px-5 py-3.5 bg-white/5 border border-white/10 rounded-2xl text-sm font-bold text-white outline-none focus:border-indigo-500/50 appearance-none">
+                  {STATUS_OPTIONS.map(s => <option key={s} value={s} className="bg-[#0F172A]">{s}</option>)}
                 </select>
               </div>
-              <button type="submit" className="col-span-2 mt-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-indigo-950 flex items-center justify-center gap-2">
-                <Check size={18}/> {editingProject ? 'Update Project' : 'Create Project'}
+
+              <button type="submit" className="w-full mt-4 bg-indigo-600 hover:bg-indigo-500 text-white font-black py-4 rounded-2xl shadow-xl shadow-indigo-600/10 transition-all uppercase tracking-widest text-[10px]">
+                {editingProject ? 'Apply Updates' : 'Sync to Cloud'}
               </button>
             </form>
           </div>
@@ -214,33 +334,52 @@ export default function App() {
   );
 }
 
-function StatCard({ label, value, icon, color }) {
-  const themes = {
-    indigo: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20',
-    emerald: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
-    rose: 'text-rose-400 bg-rose-500/10 border-rose-500/20',
-    amber: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
-  };
+// Components
+function NavItem({ icon, label, active = false }) {
   return (
-    <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl">
-      <div className={`w-10 h-10 rounded-xl flex items-center justify-center border ${themes[color]} mb-4`}>
-        {icon}
-      </div>
-      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{label}</p>
-      <p className="text-2xl font-black text-white mt-1">{value}</p>
+    <div className={`flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer transition-all ${active ? 'bg-indigo-600/10 text-indigo-400 font-bold' : 'text-slate-500 hover:bg-white/5 hover:text-slate-300'}`}>
+      {icon}
+      <span className="text-sm">{label}</span>
     </div>
   );
 }
 
-function StatusBadge({ status }) {
-  const styles = {
-    'Completed': 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-    'In Progress': 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-    'Pending': 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20',
-    'Cancelled': 'bg-rose-500/10 text-rose-400 border-rose-500/20',
+function SummaryCard({ label, value, icon, color }) {
+  const themes = {
+    indigo: 'text-indigo-400 border-indigo-500/20 bg-indigo-500/[0.03]',
+    emerald: 'text-emerald-400 border-emerald-500/20 bg-emerald-500/[0.03]',
+    rose: 'text-rose-400 border-rose-500/20 bg-rose-500/[0.03]',
+    amber: 'text-amber-400 border-amber-500/20 bg-amber-500/[0.03]',
   };
   return (
-    <span className={`text-[9px] font-black px-2.5 py-1 rounded-md border uppercase tracking-widest ${styles[status]}`}>
+    <div className={`p-5 rounded-3xl border ${themes[color]} shadow-lg shadow-black/20`}>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">{label}</p>
+        <div className="opacity-50">{icon}</div>
+      </div>
+      <p className="text-xl sm:text-2xl font-black text-white tracking-tighter">{value}</p>
+    </div>
+  );
+}
+
+function InputField({ label, ...props }) {
+  return (
+    <div className="space-y-2">
+      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest ml-1">{label}</label>
+      <input {...props} required className="w-full px-5 py-3.5 bg-white/5 border border-white/10 rounded-2xl text-sm text-white outline-none focus:bg-white/10 focus:border-indigo-500/50 transition-all placeholder:text-slate-700" />
+    </div>
+  );
+}
+
+function StatusPill({ status }) {
+  const themes = {
+    'Completed': 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
+    'In Progress': 'bg-amber-500/10 text-amber-500 border-amber-500/20',
+    'Pending': 'bg-slate-500/10 text-slate-500 border-slate-500/20',
+    'Cancelled': 'bg-rose-500/10 text-rose-500 border-rose-500/20',
+  };
+  return (
+    <span className={`text-[8px] font-black px-2.5 py-1 rounded-lg border uppercase tracking-widest inline-block ${themes[status] || themes.Pending}`}>
       {status}
     </span>
   );
