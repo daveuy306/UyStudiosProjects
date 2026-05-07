@@ -32,9 +32,14 @@ import {
   Area
 } from 'recharts';
 
-// Configuration logic
+// --- Initialization Logic ---
 const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'uy-studios-pm';
+
+// Initialize Firebase services outside component to prevent re-init
+const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
 const App = () => {
   const [user, setUser] = useState(null);
@@ -56,15 +61,8 @@ const App = () => {
     teamRole: ''
   });
 
-  // Auth & Initialization
+  // Authentication Sequence (Rule 3)
   useEffect(() => {
-    if (!firebaseConfig.apiKey) {
-      setSyncStatus('offline');
-      return;
-    }
-    const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -73,59 +71,49 @@ const App = () => {
           await signInAnonymously(auth);
         }
       } catch (err) {
+        console.error("Auth Error:", err);
         setSyncStatus('offline');
       }
     };
 
     initAuth();
-    return onAuthStateChanged(auth, setUser);
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+    });
+    return () => unsubscribe();
   }, []);
 
-  // Data Sync
+  // Data Fetching (Rule 1 & 2)
   useEffect(() => {
     if (!user) return;
-    const db = getFirestore();
-    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'projects_v5');
     
-    return onSnapshot(docRef, (snap) => {
-      if (snap.exists()) setProjects(snap.data().projects || []);
+    // Path follows Rule 1: /artifacts/{appId}/public/data/{collectionName}
+    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'pm_projects_v2');
+    
+    const unsubscribe = onSnapshot(docRef, (snap) => {
+      if (snap.exists()) {
+        setProjects(snap.data().projects || []);
+      }
       setSyncStatus('synced');
     }, (err) => {
+      console.error("Firestore Error:", err);
       setSyncStatus('error');
     });
+
+    return () => unsubscribe();
   }, [user]);
 
   const saveToCloud = async (updated) => {
     if (!user) return;
-    const db = getFirestore();
     try {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'projects_v5'), { projects: updated });
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'pm_projects_v2'), { 
+        projects: updated,
+        lastUpdated: Date.now()
+      });
     } catch (err) {
-      console.error(err);
+      console.error("Save Error:", err);
     }
   };
-
-  const stats = useMemo(() => {
-    const totalBudget = projects.reduce((acc, p) => acc + (parseFloat(p.budget) || 0), 0);
-    const totalPaid = projects.reduce((acc, p) => acc + (parseFloat(p.amountPaid) || 0), 0);
-    return {
-      active: projects.length,
-      owing: totalBudget - totalPaid,
-      revenue: totalPaid,
-      growth: '+12.5%'
-    };
-  }, [projects]);
-
-  // Mock data for the trending graph
-  const trendData = [
-    { name: 'Week 1', val: 4000 },
-    { name: 'Week 2', val: 3000 },
-    { name: 'Week 3', val: 5000 },
-    { name: 'Week 4', val: 2780 },
-    { name: 'Week 5', val: 1890 },
-    { name: 'Week 6', val: 2390 },
-    { name: 'Week 7', val: 3490 },
-  ];
 
   const handleCreate = () => {
     const payload = {
@@ -141,34 +129,60 @@ const App = () => {
     setNewProject({ name: '', location: '', budget: '', amountPaid: '', mapLink: '', filesLink: '', notes: '', teamMember: '', teamRole: '' });
   };
 
+  const handleDelete = (id) => {
+    const updated = projects.filter(p => p.id !== id);
+    setProjects(updated);
+    saveToCloud(updated);
+  };
+
+  const stats = useMemo(() => {
+    const totalBudget = projects.reduce((acc, p) => acc + (parseFloat(p.budget) || 0), 0);
+    const totalPaid = projects.reduce((acc, p) => acc + (parseFloat(p.amountPaid) || 0), 0);
+    return {
+      active: projects.length,
+      owing: totalBudget - totalPaid,
+      revenue: totalPaid,
+    };
+  }, [projects]);
+
+  const trendData = [
+    { name: 'Mon', val: 2400 },
+    { name: 'Tue', val: 1398 },
+    { name: 'Wed', val: 9800 },
+    { name: 'Thu', val: 3908 },
+    { name: 'Fri', val: 4800 },
+    { name: 'Sat', val: 3800 },
+    { name: 'Sun', val: 4300 },
+  ];
+
   return (
-    <div className="flex min-h-screen bg-[#050505] text-[#e0e0e0] font-sans overflow-hidden">
+    <div className="flex h-screen bg-[#050505] text-[#e0e0e0] font-sans overflow-hidden">
       
-      {/* Collapsible Sidebar */}
-      <aside className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-[#0a0a0a] border-r border-[#1a1a1a] transition-all duration-300 flex flex-col z-40`}>
+      {/* Premium Sidebar */}
+      <aside className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-[#0a0a0a] border-r border-[#1a1a1a] transition-all duration-300 flex flex-col shrink-0`}>
         <div className="p-6 flex items-center gap-3">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+          <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center shrink-0">
             <Briefcase className="w-5 h-5 text-white" />
           </div>
           {isSidebarOpen && <span className="font-black italic text-lg tracking-tighter uppercase">UY Studios</span>}
         </div>
 
-        <nav className="flex-1 px-4 space-y-2 mt-4">
+        <nav className="flex-1 px-4 space-y-1 mt-4">
           {[
             { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-            { id: 'projects', icon: FolderKanban, label: 'Asset Library' },
-            { id: 'timeline', icon: Clock, label: 'Timeline' },
-            { id: 'settings', icon: Settings, label: 'Systems' }
+            { id: 'projects', icon: FolderKanban, label: 'Projects' },
+            { id: 'timeline', icon: Clock, label: 'Schedule' },
+            { id: 'settings', icon: Settings, label: 'System' }
           ].map((item) => (
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
               className={`w-full flex items-center gap-4 p-3 rounded-xl transition-all ${
-                activeTab === item.id ? 'bg-blue-600/10 text-blue-500' : 'text-zinc-500 hover:text-zinc-200'
+                activeTab === item.id ? 'bg-blue-600/10 text-blue-500' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900/50'
               }`}
             >
-              <item.icon className="w-5 h-5 min-w-[20px]" />
-              {isSidebarOpen && <span className="text-xs font-bold uppercase tracking-widest">{item.label}</span>}
+              <item.icon className="w-5 h-5" />
+              {isSidebarOpen && <span className="text-[10px] font-bold uppercase tracking-widest">{item.label}</span>}
             </button>
           ))}
         </nav>
@@ -181,85 +195,77 @@ const App = () => {
         </button>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col h-screen overflow-hidden">
+      {/* Main Panel */}
+      <div className="flex-1 flex flex-col min-w-0">
         
-        {/* Header */}
-        <header className="h-20 border-b border-[#1a1a1a] flex items-center justify-between px-8 bg-[#050505]/80 backdrop-blur-xl shrink-0">
-          <div className="flex items-center gap-4">
-            <div className={`flex items-center gap-2 px-3 py-1 rounded-full border ${
+        {/* Top Header */}
+        <header className="h-20 border-b border-[#1a1a1a] flex items-center justify-between px-8 bg-[#050505]/50 backdrop-blur-xl shrink-0">
+          <div className="flex items-center gap-3">
+            <div className={`px-3 py-1 rounded-full border text-[10px] font-black uppercase tracking-widest flex items-center gap-2 ${
               syncStatus === 'synced' ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-500' : 'bg-amber-500/5 border-amber-500/20 text-amber-500'
             }`}>
               <div className={`w-1.5 h-1.5 rounded-full ${syncStatus === 'synced' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
-              <span className="text-[10px] font-black uppercase tracking-widest">
-                {syncStatus === 'synced' ? 'Live Sync' : 'Offline Mode'}
-              </span>
+              {syncStatus === 'synced' ? 'System Synced' : 'Connecting...'}
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <button 
-              onClick={() => setIsModalOpen(true)}
-              className="bg-white text-black px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-zinc-200 transition-all flex items-center gap-2"
-            >
-              <Plus className="w-3 h-3" /> Initiate Asset
-            </button>
-          </div>
+          <button 
+            onClick={() => setIsModalOpen(true)}
+            className="bg-white text-black px-6 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-zinc-200 transition-all flex items-center gap-2"
+          >
+            <Plus className="w-3 h-3" /> Create Project
+          </button>
         </header>
 
-        {/* Dashboard Scrollable Area */}
-        <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+        {/* Viewport */}
+        <main className="flex-1 overflow-y-auto p-8 space-y-10 custom-scrollbar">
           
-          {/* Top Row: Trending Graph & Stats */}
+          {/* Top Row Graphics */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            
-            {/* Trending Graph */}
-            <div className="lg:col-span-2 bg-[#0a0a0a] border border-[#1a1a1a] rounded-[2rem] p-6">
-              <div className="flex items-center justify-between mb-6">
+            <div className="lg:col-span-2 bg-[#0a0a0a] border border-[#1a1a1a] rounded-[2rem] p-8">
+              <div className="flex items-center justify-between mb-8">
                 <div>
-                  <h3 className="text-xs font-black text-zinc-500 uppercase tracking-[0.2em]">Performance Index</h3>
-                  <p className="text-2xl font-black text-white italic mt-1">Growth Forecast</p>
+                  <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Revenue Velocity</h3>
+                  <p className="text-2xl font-black text-white italic mt-1 uppercase">Financial Trending</p>
                 </div>
-                <div className="flex items-center gap-2 text-emerald-500 bg-emerald-500/10 px-3 py-1 rounded-full">
+                <div className="flex items-center gap-2 text-emerald-500 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">
                   <TrendingUp className="w-3 h-3" />
-                  <span className="text-[10px] font-black">12.5%</span>
+                  <span className="text-[10px] font-black">+14.2%</span>
                 </div>
               </div>
-              <div className="h-[200px] w-full">
+              <div className="h-[220px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={trendData}>
                     <defs>
-                      <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#2563eb" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#2563eb" stopOpacity={0}/>
+                      <linearGradient id="colorBlue" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1a1a1a" />
-                    <XAxis dataKey="name" hide />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#444', fontSize: 10}} />
                     <YAxis hide />
                     <Tooltip 
-                      contentStyle={{ backgroundColor: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '12px', fontSize: '10px', color: '#fff' }}
-                      itemStyle={{ color: '#3b82f6' }}
+                      contentStyle={{ backgroundColor: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '12px' }}
                     />
-                    <Area type="monotone" dataKey="val" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorVal)" />
+                    <Area type="monotone" dataKey="val" stroke="#3b82f6" strokeWidth={3} fill="url(#colorBlue)" />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
             </div>
 
-            {/* Quick Metrics */}
-            <div className="space-y-4">
+            <div className="flex flex-col gap-4">
               {[
-                { label: 'Active Pipeline', value: stats.active, icon: Activity, color: 'text-blue-500' },
-                { label: 'Projected Revenue', value: `$${stats.revenue.toLocaleString()}`, icon: BarChart3, color: 'text-emerald-500' },
-                { label: 'Total Liability', value: `$${stats.owing.toLocaleString()}`, icon: AlertCircle, color: 'text-rose-500' }
+                { label: 'Active Assets', val: stats.active, icon: Activity, color: 'text-blue-500' },
+                { label: 'Cleared Funds', val: `$${stats.revenue.toLocaleString()}`, icon: DollarSign, color: 'text-emerald-500' },
+                { label: 'Outstanding', val: `$${stats.owing.toLocaleString()}`, icon: AlertCircle, color: 'text-rose-500' }
               ].map((m, i) => (
-                <div key={i} className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-2xl p-5 flex items-center justify-between">
-                  <div>
-                    <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1">{m.label}</p>
-                    <p className="text-xl font-black text-white">{m.value}</p>
+                <div key={i} className="flex-1 bg-[#0a0a0a] border border-[#1a1a1a] rounded-[1.5rem] p-6 flex flex-col justify-between">
+                  <div className="flex justify-between items-start">
+                    <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em]">{m.label}</p>
+                    <m.icon className={`w-4 h-4 ${m.color}`} />
                   </div>
-                  <m.icon className={`w-5 h-5 ${m.color} opacity-40`} />
+                  <p className="text-2xl font-black text-white">{m.val}</p>
                 </div>
               ))}
             </div>
@@ -267,128 +273,135 @@ const App = () => {
 
           {/* Project List */}
           <div className="space-y-6">
-            <h2 className="text-xs font-black text-zinc-500 uppercase tracking-[0.3em]">Active Asset Ledger</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {projects.map((p) => (
-                <div key={p.id} className="group bg-[#0a0a0a] border border-[#1a1a1a] hover:border-blue-500/40 rounded-[2rem] p-6 transition-all duration-300">
-                  <div className="flex justify-between items-start mb-6">
-                    <div>
-                      <h3 className="text-lg font-black text-white uppercase italic tracking-tighter">{p.name}</h3>
-                      <div className="flex items-center gap-2 mt-1 text-zinc-500">
-                        <MapPin className="w-3 h-3" />
-                        <span className="text-[9px] font-bold uppercase">{p.location}</span>
-                      </div>
-                    </div>
-                    <button onClick={() => {
-                      const updated = projects.filter(item => item.id !== p.id);
-                      setProjects(updated);
-                      saveToCloud(updated);
-                    }} className="opacity-0 group-hover:opacity-100 p-2 text-zinc-600 hover:text-rose-500 transition-all">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 mb-6">
-                    <div className="bg-[#050505] p-4 rounded-2xl border border-[#1a1a1a]">
-                      <p className="text-[8px] font-black text-zinc-600 uppercase tracking-widest mb-1">Contract</p>
-                      <p className="text-sm font-black text-white">${p.budget}</p>
-                    </div>
-                    <div className="bg-[#050505] p-4 rounded-2xl border border-[#1a1a1a]">
-                      <p className="text-[8px] font-black text-zinc-600 uppercase tracking-widest mb-1">Settled</p>
-                      <p className="text-sm font-black text-emerald-500">${p.amountPaid}</p>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    {p.team && p.team[0]?.name && (
-                      <div className="flex items-center gap-3 bg-blue-500/5 p-3 rounded-xl border border-blue-500/10">
-                        <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center text-blue-500">
-                          <Users className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <p className="text-[10px] font-black text-white uppercase">{p.team[0].name}</p>
-                          <p className="text-[8px] font-bold text-zinc-500 uppercase">{p.team[0].role}</p>
-                        </div>
-                      </div>
-                    )}
-                    
-                    <div className="flex gap-2">
-                      {p.mapLink && (
-                        <a href={p.mapLink} target="_blank" className="flex-1 bg-zinc-900 hover:bg-zinc-800 p-2 rounded-lg text-[9px] font-black uppercase text-center tracking-widest">Map</a>
-                      )}
-                      {p.filesLink && (
-                        <a href={p.filesLink} target="_blank" className="flex-1 bg-zinc-900 hover:bg-zinc-800 p-2 rounded-lg text-[9px] font-black uppercase text-center tracking-widest">Files</a>
-                      )}
-                    </div>
-                  </div>
+            <h2 className="text-xs font-black text-zinc-500 uppercase tracking-[0.4em]">Asset Deployment Ledger</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-20">
+              {projects.length === 0 ? (
+                <div className="col-span-full py-20 border-2 border-dashed border-[#1a1a1a] rounded-[2rem] flex flex-col items-center justify-center text-zinc-600">
+                  <FolderKanban className="w-12 h-12 mb-4 opacity-20" />
+                  <p className="text-xs font-bold uppercase tracking-widest">No active projects detected</p>
                 </div>
+              ) : (
+                projects.map((p) => (
+                  <div key={p.id} className="group bg-[#0a0a0a] border border-[#1a1a1a] hover:border-blue-500/50 rounded-[2rem] p-8 transition-all duration-300">
+                    <div className="flex justify-between items-start mb-6">
+                      <div>
+                        <h3 className="text-xl font-black text-white italic uppercase tracking-tight">{p.name}</h3>
+                        <div className="flex items-center gap-2 mt-1 text-zinc-500">
+                          <MapPin className="w-3 h-3" />
+                          <span className="text-[10px] font-bold uppercase">{p.location || 'Unknown'}</span>
+                        </div>
+                      </div>
+                      <button onClick={() => handleDelete(p.id)} className="p-2 text-zinc-700 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 mb-8">
+                      <div className="bg-[#050505] p-5 rounded-2xl border border-[#1a1a1a]">
+                        <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest mb-1">Contract</p>
+                        <p className="text-md font-black text-white">${p.budget || '0'}</p>
+                      </div>
+                      <div className="bg-[#050505] p-5 rounded-2xl border border-[#1a1a1a]">
+                        <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest mb-1">Settled</p>
+                        <p className="text-md font-black text-emerald-500">${p.amountPaid || '0'}</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      {p.teamMember && (
+                        <div className="flex items-center gap-4 bg-zinc-900/40 p-4 rounded-2xl border border-[#1a1a1a]">
+                          <div className="w-10 h-10 rounded-full bg-blue-600/20 text-blue-500 flex items-center justify-center">
+                            <Users className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <p className="text-[11px] font-black text-white uppercase">{p.teamMember}</p>
+                            <p className="text-[9px] font-bold text-zinc-500 uppercase">{p.teamRole || 'Lead'}</p>
+                          </div>
+                        </div>
+                      )}
+                      
+                      <div className="flex gap-2">
+                        {p.mapLink && (
+                          <a href={p.mapLink} target="_blank" className="flex-1 flex items-center justify-center gap-2 bg-zinc-900 hover:bg-zinc-800 p-3 rounded-xl text-[10px] font-black uppercase text-white transition-all">
+                            <MapPin className="w-3 h-3" /> Map
+                          </a>
+                        )}
+                        {p.filesLink && (
+                          <a href={p.filesLink} target="_blank" className="flex-1 flex items-center justify-center gap-2 bg-zinc-900 hover:bg-zinc-800 p-3 rounded-xl text-[10px] font-black uppercase text-white transition-all">
+                            <FileText className="w-3 h-3" /> Vault
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )
               ))}
             </div>
           </div>
-        </div>
-      </main>
+        </main>
+      </div>
 
-      {/* Initiation Modal */}
+      {/* Deployment Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/90 backdrop-blur-sm" onClick={() => setIsModalOpen(false)} />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+          <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setIsModalOpen(false)} />
           <div className="relative w-full max-w-2xl bg-[#0a0a0a] border border-[#1a1a1a] rounded-[2.5rem] shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-300">
             <div className="p-8 border-b border-[#1a1a1a] flex items-center justify-between">
               <div>
-                <h2 className="text-xl font-black text-white italic tracking-tight uppercase">Initiate Asset</h2>
-                <p className="text-[9px] font-bold text-zinc-600 uppercase tracking-[0.2em] mt-1">System deployment sequence</p>
+                <h2 className="text-2xl font-black text-white italic uppercase tracking-tighter">Initiate Asset</h2>
+                <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-[0.3em] mt-1">System Deployment Sequence</p>
               </div>
-              <button onClick={() => setIsModalOpen(false)} className="text-zinc-600 hover:text-white"><X className="w-6 h-6" /></button>
+              <button onClick={() => setIsModalOpen(false)} className="text-zinc-600 hover:text-white"><X className="w-7 h-7" /></button>
             </div>
             
-            <div className="p-8 grid grid-cols-2 gap-6 overflow-y-auto max-h-[70vh] custom-scrollbar">
-              <div className="col-span-2 space-y-1.5">
-                <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Project Descriptor</label>
-                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-white font-bold focus:border-blue-500 transition-all outline-none" placeholder="e.g. STUDIO REVAMP" value={newProject.name} onChange={e => setNewProject({...newProject, name: e.target.value})} />
+            <div className="p-8 grid grid-cols-2 gap-6 max-h-[70vh] overflow-y-auto custom-scrollbar">
+              <div className="col-span-2 space-y-2">
+                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Project Name</label>
+                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-white font-black uppercase outline-none focus:border-blue-500 transition-all" placeholder="Enter Asset Name" value={newProject.name} onChange={e => setNewProject({...newProject, name: e.target.value})} />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Geography</label>
-                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-sm outline-none" placeholder="City / Region" value={newProject.location} onChange={e => setNewProject({...newProject, location: e.target.value})} />
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Region</label>
+                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-sm outline-none focus:border-blue-500 transition-all" placeholder="City" value={newProject.location} onChange={e => setNewProject({...newProject, location: e.target.value})} />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Location Link</label>
-                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-sm outline-none" placeholder="Google Maps URL" value={newProject.mapLink} onChange={e => setNewProject({...newProject, mapLink: e.target.value})} />
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Map URL</label>
+                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-sm outline-none focus:border-blue-500 transition-all" placeholder="Google Maps Link" value={newProject.mapLink} onChange={e => setNewProject({...newProject, mapLink: e.target.value})} />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Contract Value ($)</label>
-                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-white font-black outline-none" placeholder="0.00" value={newProject.budget} onChange={e => setNewProject({...newProject, budget: e.target.value})} />
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Contract ($)</label>
+                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-white font-black outline-none focus:border-blue-500 transition-all" placeholder="Total" value={newProject.budget} onChange={e => setNewProject({...newProject, budget: e.target.value})} />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Initial Deposit ($)</label>
-                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-emerald-500 font-black outline-none" placeholder="0.00" value={newProject.amountPaid} onChange={e => setNewProject({...newProject, amountPaid: e.target.value})} />
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Paid ($)</label>
+                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-emerald-500 font-black outline-none focus:border-blue-500 transition-all" placeholder="Current" value={newProject.amountPaid} onChange={e => setNewProject({...newProject, amountPaid: e.target.value})} />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Lead Member</label>
-                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-white text-sm outline-none" placeholder="Assignee Name" value={newProject.teamMember} onChange={e => setNewProject({...newProject, teamMember: e.target.value})} />
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Assignee</label>
+                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-sm outline-none focus:border-blue-500 transition-all" placeholder="Team Member" value={newProject.teamMember} onChange={e => setNewProject({...newProject, teamMember: e.target.value})} />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Designated Role</label>
-                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-zinc-400 text-sm outline-none" placeholder="e.g. Lead Designer" value={newProject.teamRole} onChange={e => setNewProject({...newProject, teamRole: e.target.value})} />
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Position</label>
+                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-sm outline-none focus:border-blue-500 transition-all" placeholder="Role" value={newProject.teamRole} onChange={e => setNewProject({...newProject, teamRole: e.target.value})} />
               </div>
 
-              <div className="col-span-2 space-y-1.5">
-                <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Project Repository (Links / Files)</label>
-                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-blue-400 text-sm outline-none" placeholder="Cloud Storage / Documentation Link" value={newProject.filesLink} onChange={e => setNewProject({...newProject, filesLink: e.target.value})} />
+              <div className="col-span-2 space-y-2">
+                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Vault Link (Drive/Dropbox)</label>
+                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-blue-400 text-sm outline-none focus:border-blue-500 transition-all" placeholder="Project Assets URL" value={newProject.filesLink} onChange={e => setNewProject({...newProject, filesLink: e.target.value})} />
               </div>
 
-              <div className="col-span-2 pt-4">
+              <div className="col-span-2 pt-6">
                 <button 
                   onClick={handleCreate}
                   disabled={!newProject.name}
-                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-20 text-white p-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-xl shadow-blue-600/20 active:scale-[0.98]"
+                  className="w-full bg-white text-black py-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-xl hover:bg-zinc-200 active:scale-[0.98] disabled:opacity-20"
                 >
-                  Confirm Deployment
+                  Deploy Assets
                 </button>
               </div>
             </div>
@@ -396,12 +409,11 @@ const App = () => {
         </div>
       )}
 
-      {/* Global CSS for scrollbars */}
       <style dangerouslySetInnerHTML={{ __html: `
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #1a1a1a; border-radius: 10px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #2a2a2a; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #333; }
       `}} />
 
     </div>
