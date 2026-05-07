@@ -20,8 +20,9 @@ import {
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 
 /**
- * PRODUCTION FIREBASE CONFIGURATION
- * Direct injection to ensure environment variables don't override with placeholders
+ * CACHE BUSTER VERSION: 1.0.4 - Force Update
+ * This version uses HARDCODED credentials to bypass any environment variable 
+ * issues that were causing the "YOUR_API_KEY" error.
  */
 const firebaseConfig = {
   apiKey: "AIzaSyAiSo4QbPqEOX-bTvbE7BjHtOY78_fTHpY",
@@ -33,12 +34,14 @@ const firebaseConfig = {
   measurementId: "G-8R4PKT6WM4"
 };
 
+// Initialize services immediately
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Collection path for multi-tenant structure
-const COLLECTION_PATH = ['projects'];
+// Use a fixed path for project data
+const APP_ID = 'uystudios-prod';
+const COLLECTION_PATH = ['artifacts', APP_ID, 'public', 'data', 'projects'];
 const STATUS_OPTIONS = ['Completed', 'In Progress', 'Pending', 'Cancelled'];
 
 export default function App() {
@@ -51,34 +54,46 @@ export default function App() {
   const [editingProject, setEditingProject] = useState(null);
   const [payrollMembers, setPayrollMembers] = useState([]);
 
-  // Auth Effect
+  // Auth Effect - Fixed initialization logic
   useEffect(() => {
     const initAuth = async () => {
       try {
+        // Force anonymous sign in to ensure we have a valid token for Firestore
         await signInAnonymously(auth);
       } catch (error) {
-        console.error("Auth initialization failed:", error);
+        console.error("Firebase Auth Error:", error);
       }
     };
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+    });
     return () => unsubscribe();
   }, []);
 
-  // Data Sync Effect
+  // Firestore Real-time Sync
   useEffect(() => {
     if (!user) return;
+    
+    setLoading(true);
     const colRef = collection(db, ...COLLECTION_PATH);
-    const unsubscribe = onSnapshot(colRef, (snapshot) => {
-      setProjects(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })));
-      setLoading(false);
-    }, (err) => {
-      console.error("Firestore sync error:", err);
-    });
+    
+    const unsubscribe = onSnapshot(colRef, 
+      (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+        setProjects(data);
+        setLoading(false);
+      }, 
+      (err) => {
+        console.error("Firestore Permission/Path Error:", err);
+        setLoading(false);
+      }
+    );
+    
     return () => unsubscribe();
   }, [user]);
 
-  // Analytics Logic
+  // Calculations for Dashboard
   const stats = useMemo(() => {
     const totalRevenue = projects.reduce((sum, p) => sum + (Number(p.budget) || 0), 0);
     const totalPayroll = projects.reduce((sum, p) => {
@@ -88,8 +103,9 @@ export default function App() {
 
     const netProfit = totalRevenue - totalPayroll;
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const trendsObj = {};
     
+    // Grouping for chart
+    const trendsObj = {};
     projects.forEach(p => {
       if (!p.date) return;
       const d = new Date(p.date);
@@ -99,7 +115,10 @@ export default function App() {
       trendsObj[m].payroll += (p.payrollMembers || []).reduce((s, mem) => s + (Number(mem.rate) || 0), 0);
     });
 
-    const incomeChartData = monthNames.filter(m => trendsObj[m]).map(m => trendsObj[m]);
+    const incomeChartData = monthNames
+      .map(m => trendsObj[m] || { name: m, revenue: 0, payroll: 0 })
+      .filter((_, i) => i <= new Date().getMonth());
+
     const statusData = STATUS_OPTIONS.map(status => ({
       name: status,
       value: projects.filter(p => p.status === status).length
@@ -124,17 +143,18 @@ export default function App() {
   const handleSave = async (e) => {
     e.preventDefault();
     if (!user) return;
+    
     const fd = new FormData(e.target);
     const data = {
       client: fd.get('client'),
       event: fd.get('event'),
       location: fd.get('location'),
       locationUrl: fd.get('locationUrl'),
-      gitRepo: fd.get('gitRepo'),
       date: fd.get('date'),
       budget: Number(fd.get('budget')),
       status: fd.get('status'),
-      payrollMembers: payrollMembers 
+      payrollMembers: payrollMembers,
+      updatedAt: new Date().toISOString()
     };
 
     try {
@@ -144,15 +164,27 @@ export default function App() {
         await addDoc(collection(db, ...COLLECTION_PATH), { ...data, createdAt: new Date().toISOString() });
       }
       setIsModalOpen(false);
-    } catch (e) { 
-      console.error("Save error:", e);
+    } catch (err) { 
+      console.error("Save failed:", err);
     }
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm("Delete this production?")) return;
-    await deleteDoc(doc(db, ...COLLECTION_PATH, id));
+    if (!window.confirm("Are you sure you want to delete this record?")) return;
+    try {
+      await deleteDoc(doc(db, ...COLLECTION_PATH, id));
+    } catch (err) {
+      console.error("Delete failed:", err);
+    }
   };
+
+  if (loading && !user) {
+    return (
+      <div className="min-h-screen bg-[#020617] flex items-center justify-center">
+        <div className="animate-spin text-indigo-500"><BarChart3 size={40}/></div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#020617] text-slate-200 flex flex-col md:flex-row font-sans">
@@ -165,28 +197,29 @@ export default function App() {
             </div>
             <h1 className="text-lg font-black tracking-tighter uppercase text-white">UY Studios</h1>
           </div>
+          <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest px-1">v1.0.4 PROD</div>
         </div>
         <nav className="flex-1 px-4 space-y-1">
           <SidebarLink icon={<LayoutDashboard size={18}/>} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-          <SidebarLink icon={<Briefcase size={18}/>} label="Projects" active={activeTab === 'projects'} onClick={() => setActiveTab('projects')} />
+          <SidebarLink icon={<Briefcase size={18}/>} label="Productions" active={activeTab === 'projects'} onClick={() => setActiveTab('projects')} />
         </nav>
       </aside>
 
-      {/* Main Content */}
+      {/* Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
         <header className="h-20 border-b border-white/5 px-8 items-center justify-between bg-[#020617]/50 backdrop-blur-md hidden md:flex">
           <div className="relative w-96">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" size={16} />
             <input 
               type="text" 
-              placeholder="Search productions..." 
+              placeholder="Search by client or event..." 
               className="bg-white/5 border border-white/5 rounded-2xl px-11 py-2 text-xs w-full outline-none focus:border-indigo-500/50"
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
             />
           </div>
-          <button onClick={() => handleOpenModal()} className="bg-indigo-600 text-white px-6 py-2.5 rounded-2xl text-xs font-black flex items-center gap-2 transition-transform active:scale-95">
-            <Plus size={16} /> NEW PROJECT
+          <button onClick={() => handleOpenModal()} className="bg-indigo-600 text-white px-6 py-2.5 rounded-2xl text-xs font-black flex items-center gap-2 hover:bg-indigo-500 transition-colors">
+            <Plus size={16} /> CREATE PRODUCTION
           </button>
         </header>
 
@@ -195,20 +228,26 @@ export default function App() {
             <>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatCard label="Pipeline" value={`$${stats.totalRevenue.toLocaleString()}`} color="indigo" icon={<TrendingUp size={16}/>} />
-                <StatCard label="Team Cost" value={`$${stats.totalPayroll.toLocaleString()}`} color="rose" icon={<Users size={16}/>} />
-                <StatCard label="Proj. Profit" value={`$${stats.netProfit.toLocaleString()}`} color="emerald" icon={<CheckCircle2 size={16}/>} />
-                <StatCard label="Active Shoots" value={stats.statusData.find(d => d.name === 'In Progress')?.value || 0} color="amber" icon={<Calendar size={16}/>} />
+                <StatCard label="Cost" value={`$${stats.totalPayroll.toLocaleString()}`} color="rose" icon={<Users size={16}/>} />
+                <StatCard label="Net Profit" value={`$${stats.netProfit.toLocaleString()}`} color="emerald" icon={<CheckCircle2 size={16}/>} />
+                <StatCard label="Active" value={stats.statusData.find(d => d.name === 'In Progress')?.value || 0} color="amber" icon={<Calendar size={16}/>} />
               </div>
 
-              <div className="bg-[#0F172A] p-6 rounded-[2rem] border border-white/5 min-h-[350px]">
-                <h3 className="text-[10px] font-black uppercase text-slate-500 mb-6 tracking-widest">Revenue vs. Cost Trends</h3>
+              <div className="bg-[#0F172A] p-6 rounded-[2rem] border border-white/5">
+                <h3 className="text-[10px] font-black uppercase text-slate-500 mb-6 tracking-widest">Financial Performance</h3>
                 <div className="h-[250px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={stats.incomeChartData}>
+                      <defs>
+                        <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
                       <XAxis dataKey="name" stroke="#475569" fontSize={10} axisLine={false} tickLine={false} />
-                      <Tooltip contentStyle={{background: '#0F172A', border: 'none', borderRadius: '12px'}} />
-                      <Area type="monotone" dataKey="revenue" stroke="#6366f1" fill="#6366f1" fillOpacity={0.1} strokeWidth={3} />
-                      <Area type="monotone" dataKey="payroll" stroke="#f43f5e" fill="#f43f5e" fillOpacity={0.1} strokeWidth={2} />
+                      <Tooltip contentStyle={{background: '#0F172A', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px'}} />
+                      <Area type="monotone" dataKey="revenue" stroke="#6366f1" fillOpacity={1} fill="url(#colorRev)" strokeWidth={3} />
+                      <Area type="monotone" dataKey="payroll" stroke="#f43f5e" fill="transparent" strokeWidth={2} strokeDasharray="5 5" />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
@@ -216,75 +255,80 @@ export default function App() {
             </>
           )}
 
-          <div className="bg-[#0F172A] rounded-[2rem] border border-white/5 overflow-hidden shadow-2xl">
-            <div className="p-6 border-b border-white/5 flex justify-between items-center">
-              <h3 className="text-xs font-black uppercase text-slate-400">Live Productions</h3>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="text-[10px] uppercase font-black tracking-widest text-slate-500 border-b border-white/5">
-                    <th className="px-6 py-4">Client / Event</th>
-                    <th className="px-6 py-4">Context</th>
-                    <th className="px-6 py-4">Team</th>
-                    <th className="px-6 py-4">Payroll</th>
-                    <th className="px-6 py-4">Status</th>
-                    <th className="px-6 py-4 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {filteredProjects.map(p => (
-                    <tr key={p.id} className="hover:bg-white/[0.02]">
-                      <td className="px-6 py-5">
-                        <div className="text-sm font-bold text-white">{p.client}</div>
-                        <div className="text-[10px] text-slate-500 font-medium">{p.event} • {p.date}</div>
-                      </td>
-                      <td className="px-6 py-5 space-y-1.5">
-                        {p.locationUrl ? (
-                          <a href={p.locationUrl} target="_blank" rel="noopener noreferrer" className="group flex items-center gap-1.5 text-[11px] text-indigo-400">
-                            <MapPin size={12} />
-                            <span className="underline decoration-indigo-500/30 truncate max-w-[120px]">{p.location || 'Map'}</span>
-                          </a>
-                        ) : (
-                          <div className="flex items-center gap-1.5 text-[11px] text-slate-500 italic">No Map</div>
-                        )}
-                      </td>
-                      <td className="px-6 py-5">
-                        <span className="text-xs text-slate-400 bg-white/5 px-2 py-1 rounded-lg">
-                          {p.payrollMembers?.length || 0} crew
-                        </span>
-                      </td>
-                      <td className="px-6 py-5 font-bold text-white text-xs">
-                        ${(p.payrollMembers || []).reduce((s, m) => s + (Number(m.rate) || 0), 0).toLocaleString()}
-                      </td>
-                      <td className="px-6 py-5">
-                        <StatusBadge status={p.status} />
-                      </td>
-                      <td className="px-6 py-5 text-right">
-                        <div className="flex gap-2 justify-end">
-                          <button onClick={() => handleOpenModal(p)} className="p-2 text-slate-500 hover:text-indigo-400"><Edit2 size={14}/></button>
-                          <button onClick={() => handleDelete(p.id)} className="p-2 text-slate-500 hover:text-rose-400"><Trash2 size={14}/></button>
-                        </div>
-                      </td>
+          {activeTab === 'projects' && (
+            <div className="bg-[#0F172A] rounded-[2rem] border border-white/5 overflow-hidden">
+              <div className="p-6 border-b border-white/5 flex justify-between items-center">
+                <h3 className="text-xs font-black uppercase text-slate-400">Production Log</h3>
+                <div className="md:hidden">
+                   <button onClick={() => handleOpenModal()} className="p-2 bg-indigo-600 rounded-full text-white"><Plus size={16}/></button>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="text-[10px] uppercase font-black tracking-widest text-slate-500 border-b border-white/5">
+                      <th className="px-6 py-4">Client / Event</th>
+                      <th className="px-6 py-4">Location</th>
+                      <th className="px-6 py-4">Crew Size</th>
+                      <th className="px-6 py-4">Revenue</th>
+                      <th className="px-6 py-4">Status</th>
+                      <th className="px-6 py-4 text-right">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {filteredProjects.length === 0 ? (
+                      <tr><td colSpan="6" className="p-10 text-center text-slate-600 text-xs italic">No productions found.</td></tr>
+                    ) : filteredProjects.map(p => (
+                      <tr key={p.id} className="hover:bg-white/[0.02] group">
+                        <td className="px-6 py-5">
+                          <div className="text-sm font-bold text-white">{p.client}</div>
+                          <div className="text-[10px] text-slate-500 font-medium">{p.event} • {p.date}</div>
+                        </td>
+                        <td className="px-6 py-5">
+                          {p.locationUrl ? (
+                            <a href={p.locationUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-[11px] text-indigo-400 hover:text-indigo-300">
+                              <MapPin size={12} />
+                              <span className="underline decoration-indigo-500/30 truncate max-w-[100px]">{p.location || 'Link'}</span>
+                            </a>
+                          ) : <span className="text-[11px] text-slate-600 italic">No link</span>}
+                        </td>
+                        <td className="px-6 py-5">
+                          <span className="text-xs text-slate-400 bg-white/5 px-2 py-1 rounded-lg">
+                            {p.payrollMembers?.length || 0} crew
+                          </span>
+                        </td>
+                        <td className="px-6 py-5 font-bold text-white text-xs">
+                          ${(Number(p.budget) || 0).toLocaleString()}
+                        </td>
+                        <td className="px-6 py-5">
+                          <StatusBadge status={p.status} />
+                        </td>
+                        <td className="px-6 py-5 text-right">
+                          <div className="flex gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => handleOpenModal(p)} className="p-2 text-slate-500 hover:text-indigo-400"><Edit2 size={14}/></button>
+                            <button onClick={() => handleDelete(p.id)} className="p-2 text-slate-500 hover:text-rose-400"><Trash2 size={14}/></button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
+          )}
         </main>
       </div>
 
-      {/* Mobile Navigation */}
+      {/* Mobile Nav */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#0F172A] border-t border-white/5 flex items-center justify-around z-50">
-        <button onClick={() => setActiveTab('dashboard')} className={activeTab === 'dashboard' ? 'text-indigo-500' : 'text-slate-500'}><LayoutDashboard /></button>
-        <button onClick={() => setActiveTab('projects')} className={activeTab === 'projects' ? 'text-indigo-500' : 'text-slate-500'}><Briefcase /></button>
+        <button onClick={() => setActiveTab('dashboard')} className={activeTab === 'dashboard' ? 'text-indigo-500' : 'text-slate-500'}><LayoutDashboard size={20} /></button>
+        <button onClick={() => setActiveTab('projects')} className={activeTab === 'projects' ? 'text-indigo-500' : 'text-slate-500'}><Briefcase size={20} /></button>
       </nav>
 
-      {/* Project Modal */}
+      {/* Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-[#0F172A] border border-white/10 w-full max-w-2xl rounded-[2.5rem] p-8 max-h-[90vh] overflow-y-auto shadow-2xl">
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-[#0F172A] border border-white/10 w-full max-w-2xl rounded-[2.5rem] p-8 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-8">
               <h2 className="text-xl font-black text-white uppercase">{editingProject ? 'Edit' : 'New'} Production</h2>
               <button onClick={() => setIsModalOpen(false)} className="p-2 text-slate-500 hover:text-white"><X /></button>
@@ -292,15 +336,15 @@ export default function App() {
 
             <form onSubmit={handleSave} className="space-y-6">
               <div className="grid grid-cols-2 gap-4">
-                <FormInput label="Client" name="client" defaultValue={editingProject?.client} required />
-                <FormInput label="Event Name" name="event" defaultValue={editingProject?.event} required />
+                <FormInput label="Client Name" name="client" defaultValue={editingProject?.client} required />
+                <FormInput label="Event" name="event" defaultValue={editingProject?.event} required />
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <FormInput label="Location" name="location" defaultValue={editingProject?.location} />
-                <FormInput label="Google Maps Link" name="locationUrl" defaultValue={editingProject?.locationUrl} />
+                <FormInput label="Location Name" name="location" defaultValue={editingProject?.location} />
+                <FormInput label="Maps URL" name="locationUrl" defaultValue={editingProject?.locationUrl} />
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <FormInput label="Shoot Date" name="date" type="date" defaultValue={editingProject?.date} required />
+                <FormInput label="Date" name="date" type="date" defaultValue={editingProject?.date} required />
                 <div className="space-y-1">
                   <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest ml-1">Status</label>
                   <select name="status" defaultValue={editingProject?.status || 'Pending'} className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-indigo-500 outline-none">
@@ -312,22 +356,22 @@ export default function App() {
               
               <div className="pt-4 border-t border-white/5 space-y-4">
                 <div className="flex justify-between items-center">
-                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Crew / Payroll</label>
+                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Crew Payroll</label>
                   <button type="button" onClick={() => setPayrollMembers([...payrollMembers, { id: Date.now(), name: '', role: '', rate: '', paid: false }])} className="text-[10px] font-black text-indigo-400 flex items-center gap-1 uppercase">
-                    <UserPlus size={14}/> Add Crew
+                    <UserPlus size={14}/> Add Staff
                   </button>
                 </div>
                 {payrollMembers.map((member) => (
                   <div key={member.id} className="flex gap-2 bg-white/5 p-3 rounded-2xl items-center border border-white/5">
-                    <input placeholder="Name" className="flex-1 bg-transparent text-xs text-white outline-none" value={member.name} onChange={(e) => setPayrollMembers(payrollMembers.map(m => m.id === member.id ? { ...m, name: e.target.value } : m))} />
-                    <input placeholder="Rate" type="number" className="w-20 bg-transparent text-xs text-indigo-400 outline-none font-bold" value={member.rate} onChange={(e) => setPayrollMembers(payrollMembers.map(m => m.id === member.id ? { ...m, rate: e.target.value } : m))} />
-                    <button type="button" onClick={() => setPayrollMembers(payrollMembers.filter(m => m.id !== member.id))} className="text-rose-500/50"><MinusCircle size={16}/></button>
+                    <input placeholder="Staff Name" className="flex-1 bg-transparent text-xs text-white outline-none" value={member.name} onChange={(e) => setPayrollMembers(payrollMembers.map(m => m.id === member.id ? { ...m, name: e.target.value } : m))} />
+                    <input placeholder="Rate ($)" type="number" className="w-20 bg-transparent text-xs text-rose-400 outline-none font-bold text-right" value={member.rate} onChange={(e) => setPayrollMembers(payrollMembers.map(m => m.id === member.id ? { ...m, rate: e.target.value } : m))} />
+                    <button type="button" onClick={() => setPayrollMembers(payrollMembers.filter(m => m.id !== member.id))} className="text-rose-500/50 hover:text-rose-500 transition-colors"><MinusCircle size={16}/></button>
                   </div>
                 ))}
               </div>
 
-              <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs transition-all">
-                Save Production
+              <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs transition-all shadow-xl shadow-indigo-500/10">
+                Confirm & Sync
               </button>
             </form>
           </div>
