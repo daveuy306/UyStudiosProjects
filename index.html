@@ -2,30 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Project Tracker</title>
-    <!-- Tailwind CSS via CDN (Optional if you have Tailwind configured locally) -->
+    <title>UY Studios Tracker</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@600;700&family=Inter:wght@400;500;600;700;900&display=swap');
-      
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap');
       body { 
         font-family: 'Inter', sans-serif; 
-        background-color: #020617; /* Matches the dark mode theme */
+        background-color: #020617;
         margin: 0;
-      }
-      
-      .font-serif { 
-        font-family: 'Crimson Pro', serif; 
       }
     </style>
   </head>
   <body>
-    <!-- This is where React will inject your app -->
     <div id="root"></div>
-    
-    <!-- This line is CRITICAL: It points Vite to your React entry point -->
+    <!-- This path must match your local file structure (usually src/main.jsx) -->
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
