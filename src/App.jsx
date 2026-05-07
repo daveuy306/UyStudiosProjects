@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Plus, Search, Edit2, Trash2, X, MapPin, LayoutDashboard, 
-  Briefcase, BarChart3, Film, CheckCircle2, Wallet, 
-  TrendingUp, Users, Calendar, Link as LinkIcon, 
-  FileText, DollarSign, ChevronRight, Menu, UserPlus, MinusCircle,
-  ExternalLink, Github, Code
+  Briefcase, BarChart3, Film, CheckCircle2, 
+  TrendingUp, Users, Calendar, 
+  UserPlus, MinusCircle, Globe
 } from 'lucide-react';
 import { 
   XAxis, YAxis, Tooltip, ResponsiveContainer, 
@@ -20,9 +19,8 @@ import {
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 
 /**
- * CACHE BUSTER VERSION: 1.0.4 - Force Update
- * This version uses HARDCODED credentials to bypass any environment variable 
- * issues that were causing the "YOUR_API_KEY" error.
+ * VERSION: 1.0.5 - Fix Build Errors
+ * Removed problematic 'Github' icon export and kept hardcoded config.
  */
 const firebaseConfig = {
   apiKey: "AIzaSyAiSo4QbPqEOX-bTvbE7BjHtOY78_fTHpY",
@@ -39,7 +37,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Use a fixed path for project data
+// Fixed path for production data
 const APP_ID = 'uystudios-prod';
 const COLLECTION_PATH = ['artifacts', APP_ID, 'public', 'data', 'projects'];
 const STATUS_OPTIONS = ['Completed', 'In Progress', 'Pending', 'Cancelled'];
@@ -54,11 +52,10 @@ export default function App() {
   const [editingProject, setEditingProject] = useState(null);
   const [payrollMembers, setPayrollMembers] = useState([]);
 
-  // Auth Effect - Fixed initialization logic
+  // Auth Effect
   useEffect(() => {
     const initAuth = async () => {
       try {
-        // Force anonymous sign in to ensure we have a valid token for Firestore
         await signInAnonymously(auth);
       } catch (error) {
         console.error("Firebase Auth Error:", error);
@@ -85,7 +82,7 @@ export default function App() {
         setLoading(false);
       }, 
       (err) => {
-        console.error("Firestore Permission/Path Error:", err);
+        console.error("Firestore Permission Error:", err);
         setLoading(false);
       }
     );
@@ -93,7 +90,7 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
-  // Calculations for Dashboard
+  // Dashboard Stats
   const stats = useMemo(() => {
     const totalRevenue = projects.reduce((sum, p) => sum + (Number(p.budget) || 0), 0);
     const totalPayroll = projects.reduce((sum, p) => {
@@ -104,7 +101,6 @@ export default function App() {
     const netProfit = totalRevenue - totalPayroll;
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     
-    // Grouping for chart
     const trendsObj = {};
     projects.forEach(p => {
       if (!p.date) return;
@@ -170,7 +166,7 @@ export default function App() {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this record?")) return;
+    if (!window.confirm("Delete this record permanently?")) return;
     try {
       await deleteDoc(doc(db, ...COLLECTION_PATH, id));
     } catch (err) {
@@ -197,7 +193,7 @@ export default function App() {
             </div>
             <h1 className="text-lg font-black tracking-tighter uppercase text-white">UY Studios</h1>
           </div>
-          <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest px-1">v1.0.4 PROD</div>
+          <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest px-1">v1.0.5 PROD</div>
         </div>
         <nav className="flex-1 px-4 space-y-1">
           <SidebarLink icon={<LayoutDashboard size={18}/>} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
@@ -205,21 +201,21 @@ export default function App() {
         </nav>
       </aside>
 
-      {/* Content Area */}
+      {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0">
         <header className="h-20 border-b border-white/5 px-8 items-center justify-between bg-[#020617]/50 backdrop-blur-md hidden md:flex">
           <div className="relative w-96">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" size={16} />
             <input 
               type="text" 
-              placeholder="Search by client or event..." 
+              placeholder="Filter productions..." 
               className="bg-white/5 border border-white/5 rounded-2xl px-11 py-2 text-xs w-full outline-none focus:border-indigo-500/50"
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
             />
           </div>
           <button onClick={() => handleOpenModal()} className="bg-indigo-600 text-white px-6 py-2.5 rounded-2xl text-xs font-black flex items-center gap-2 hover:bg-indigo-500 transition-colors">
-            <Plus size={16} /> CREATE PRODUCTION
+            <Plus size={16} /> NEW PRODUCTION
           </button>
         </header>
 
@@ -227,14 +223,14 @@ export default function App() {
           {activeTab === 'dashboard' && (
             <>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <StatCard label="Pipeline" value={`$${stats.totalRevenue.toLocaleString()}`} color="indigo" icon={<TrendingUp size={16}/>} />
-                <StatCard label="Cost" value={`$${stats.totalPayroll.toLocaleString()}`} color="rose" icon={<Users size={16}/>} />
+                <StatCard label="Total Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} color="indigo" icon={<TrendingUp size={16}/>} />
+                <StatCard label="Total Cost" value={`$${stats.totalPayroll.toLocaleString()}`} color="rose" icon={<Users size={16}/>} />
                 <StatCard label="Net Profit" value={`$${stats.netProfit.toLocaleString()}`} color="emerald" icon={<CheckCircle2 size={16}/>} />
-                <StatCard label="Active" value={stats.statusData.find(d => d.name === 'In Progress')?.value || 0} color="amber" icon={<Calendar size={16}/>} />
+                <StatCard label="Active Shoots" value={stats.statusData.find(d => d.name === 'In Progress')?.value || 0} color="amber" icon={<Calendar size={16}/>} />
               </div>
 
               <div className="bg-[#0F172A] p-6 rounded-[2rem] border border-white/5">
-                <h3 className="text-[10px] font-black uppercase text-slate-500 mb-6 tracking-widest">Financial Performance</h3>
+                <h3 className="text-[10px] font-black uppercase text-slate-500 mb-6 tracking-widest">Revenue vs Cost Breakdown</h3>
                 <div className="h-[250px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={stats.incomeChartData}>
@@ -245,6 +241,7 @@ export default function App() {
                         </linearGradient>
                       </defs>
                       <XAxis dataKey="name" stroke="#475569" fontSize={10} axisLine={false} tickLine={false} />
+                      <YAxis hide />
                       <Tooltip contentStyle={{background: '#0F172A', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px'}} />
                       <Area type="monotone" dataKey="revenue" stroke="#6366f1" fillOpacity={1} fill="url(#colorRev)" strokeWidth={3} />
                       <Area type="monotone" dataKey="payroll" stroke="#f43f5e" fill="transparent" strokeWidth={2} strokeDasharray="5 5" />
@@ -258,7 +255,7 @@ export default function App() {
           {activeTab === 'projects' && (
             <div className="bg-[#0F172A] rounded-[2rem] border border-white/5 overflow-hidden">
               <div className="p-6 border-b border-white/5 flex justify-between items-center">
-                <h3 className="text-xs font-black uppercase text-slate-400">Production Log</h3>
+                <h3 className="text-xs font-black uppercase text-slate-400">Production Ledger</h3>
                 <div className="md:hidden">
                    <button onClick={() => handleOpenModal()} className="p-2 bg-indigo-600 rounded-full text-white"><Plus size={16}/></button>
                 </div>
@@ -267,9 +264,9 @@ export default function App() {
                 <table className="w-full text-left">
                   <thead>
                     <tr className="text-[10px] uppercase font-black tracking-widest text-slate-500 border-b border-white/5">
-                      <th className="px-6 py-4">Client / Event</th>
+                      <th className="px-6 py-4">Project</th>
                       <th className="px-6 py-4">Location</th>
-                      <th className="px-6 py-4">Crew Size</th>
+                      <th className="px-6 py-4">Crew</th>
                       <th className="px-6 py-4">Revenue</th>
                       <th className="px-6 py-4">Status</th>
                       <th className="px-6 py-4 text-right">Actions</th>
@@ -277,7 +274,7 @@ export default function App() {
                   </thead>
                   <tbody className="divide-y divide-white/5">
                     {filteredProjects.length === 0 ? (
-                      <tr><td colSpan="6" className="p-10 text-center text-slate-600 text-xs italic">No productions found.</td></tr>
+                      <tr><td colSpan="6" className="p-10 text-center text-slate-600 text-xs italic">No productions logged.</td></tr>
                     ) : filteredProjects.map(p => (
                       <tr key={p.id} className="hover:bg-white/[0.02] group">
                         <td className="px-6 py-5">
@@ -288,9 +285,9 @@ export default function App() {
                           {p.locationUrl ? (
                             <a href={p.locationUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-[11px] text-indigo-400 hover:text-indigo-300">
                               <MapPin size={12} />
-                              <span className="underline decoration-indigo-500/30 truncate max-w-[100px]">{p.location || 'Link'}</span>
+                              <span className="underline decoration-indigo-500/30 truncate max-w-[100px]">{p.location || 'Map'}</span>
                             </a>
-                          ) : <span className="text-[11px] text-slate-600 italic">No link</span>}
+                          ) : <span className="text-[11px] text-slate-600 italic">No address</span>}
                         </td>
                         <td className="px-6 py-5">
                           <span className="text-xs text-slate-400 bg-white/5 px-2 py-1 rounded-lg">
@@ -337,14 +334,14 @@ export default function App() {
             <form onSubmit={handleSave} className="space-y-6">
               <div className="grid grid-cols-2 gap-4">
                 <FormInput label="Client Name" name="client" defaultValue={editingProject?.client} required />
-                <FormInput label="Event" name="event" defaultValue={editingProject?.event} required />
+                <FormInput label="Event Type" name="event" defaultValue={editingProject?.event} required />
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <FormInput label="Location Name" name="location" defaultValue={editingProject?.location} />
+                <FormInput label="Venue Name" name="location" defaultValue={editingProject?.location} />
                 <FormInput label="Maps URL" name="locationUrl" defaultValue={editingProject?.locationUrl} />
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <FormInput label="Date" name="date" type="date" defaultValue={editingProject?.date} required />
+                <FormInput label="Shoot Date" name="date" type="date" defaultValue={editingProject?.date} required />
                 <div className="space-y-1">
                   <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest ml-1">Status</label>
                   <select name="status" defaultValue={editingProject?.status || 'Pending'} className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-indigo-500 outline-none">
@@ -352,18 +349,18 @@ export default function App() {
                   </select>
                 </div>
               </div>
-              <FormInput label="Total Revenue ($)" name="budget" type="number" defaultValue={editingProject?.budget} />
+              <FormInput label="Production Fee ($)" name="budget" type="number" defaultValue={editingProject?.budget} />
               
               <div className="pt-4 border-t border-white/5 space-y-4">
                 <div className="flex justify-between items-center">
-                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Crew Payroll</label>
+                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Crew & Payroll</label>
                   <button type="button" onClick={() => setPayrollMembers([...payrollMembers, { id: Date.now(), name: '', role: '', rate: '', paid: false }])} className="text-[10px] font-black text-indigo-400 flex items-center gap-1 uppercase">
-                    <UserPlus size={14}/> Add Staff
+                    <UserPlus size={14}/> Add Crew
                   </button>
                 </div>
                 {payrollMembers.map((member) => (
                   <div key={member.id} className="flex gap-2 bg-white/5 p-3 rounded-2xl items-center border border-white/5">
-                    <input placeholder="Staff Name" className="flex-1 bg-transparent text-xs text-white outline-none" value={member.name} onChange={(e) => setPayrollMembers(payrollMembers.map(m => m.id === member.id ? { ...m, name: e.target.value } : m))} />
+                    <input placeholder="Name" className="flex-1 bg-transparent text-xs text-white outline-none" value={member.name} onChange={(e) => setPayrollMembers(payrollMembers.map(m => m.id === member.id ? { ...m, name: e.target.value } : m))} />
                     <input placeholder="Rate ($)" type="number" className="w-20 bg-transparent text-xs text-rose-400 outline-none font-bold text-right" value={member.rate} onChange={(e) => setPayrollMembers(payrollMembers.map(m => m.id === member.id ? { ...m, rate: e.target.value } : m))} />
                     <button type="button" onClick={() => setPayrollMembers(payrollMembers.filter(m => m.id !== member.id))} className="text-rose-500/50 hover:text-rose-500 transition-colors"><MinusCircle size={16}/></button>
                   </div>
@@ -371,7 +368,7 @@ export default function App() {
               </div>
 
               <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs transition-all shadow-xl shadow-indigo-500/10">
-                Confirm & Sync
+                Update Production
               </button>
             </form>
           </div>
