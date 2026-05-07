@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getFirestore, 
   doc, 
@@ -14,7 +14,6 @@ import {
 } from 'firebase/auth';
 import { 
   Users, Plus, Trash2, Briefcase, 
-  AlertCircle, RefreshCcw, 
   CheckCircle2, UserPlus, MapPin, 
   DollarSign, ExternalLink,
   ShieldCheck, Calendar, ShoppingCart,
@@ -32,15 +31,28 @@ import {
   Line
 } from 'recharts';
 
-// --- FIREBASE CONFIGURATION ---
-const firebaseConfig = typeof __firebase_config !== 'undefined' 
-  ? JSON.parse(__firebase_config) 
-  : { apiKey: "", authDomain: "", projectId: "" }; // Empty strings prevent "preview" key errors
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'uy-project-manager';
+// --- SAFE INITIALIZATION WRAPPER ---
+// This prevents the "invalid-api-key" error by only initializing if a valid key exists
+const getFirebaseInstance = () => {
+  const configStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
+  if (!configStr) return { app: null, db: null, auth: null, valid: false };
+  
+  try {
+    const config = JSON.parse(configStr);
+    // Basic validation to ensure we aren't using a "preview" placeholder string
+    if (!config.apiKey || config.apiKey === 'preview') {
+      return { app: null, db: null, auth: null, valid: false };
+    }
+    
+    const app = getApps().length > 0 ? getApp() : initializeApp(config);
+    const db = getFirestore(app);
+    const auth = getAuth(app);
+    return { app, db, auth, valid: true };
+  } catch (e) {
+    console.warn("Firebase config parsing failed:", e);
+    return { app: null, db: null, auth: null, valid: false };
+  }
+};
 
 const App = () => {
   const [user, setUser] = useState(null);
@@ -57,16 +69,19 @@ const App = () => {
     notes: ''
   });
 
-  // --- AUTHENTICATION ---
-  useEffect(() => {
-    const initAuth = async () => {
-      // Don't try to auth if config is missing (local dev)
-      if (!firebaseConfig.apiKey) {
-        setSyncStatus('offline');
-        setLoading(false);
-        return;
-      }
+  const appId = typeof __app_id !== 'undefined' ? __app_id : 'uy-project-manager';
 
+  // --- AUTHENTICATION & INITIALIZATION ---
+  useEffect(() => {
+    const { auth, valid } = getFirebaseInstance();
+    
+    if (!valid) {
+      setSyncStatus('offline');
+      setLoading(false);
+      return;
+    }
+
+    const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
@@ -74,20 +89,27 @@ const App = () => {
           await signInAnonymously(auth);
         }
       } catch (err) {
-        console.error("Auth Error:", err);
+        console.error("Auth failed:", err);
         setSyncStatus('offline');
       } finally {
         setLoading(false);
       }
     };
+
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      if (u) setSyncStatus('synced');
+    });
+    
     return () => unsubscribe();
   }, []);
 
   // --- DATABASE SYNC ---
   useEffect(() => {
-    if (!user || !firebaseConfig.apiKey) return;
+    const { db, valid } = getFirebaseInstance();
+    if (!user || !valid) return;
+
     const dataDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'projects_v3');
     
     const unsubscribe = onSnapshot(dataDocRef, (snap) => {
@@ -96,6 +118,7 @@ const App = () => {
       }
       setSyncStatus('synced');
     }, (err) => {
+      console.warn("Firestore sync error:", err);
       setSyncStatus('error');
     });
     
@@ -104,7 +127,9 @@ const App = () => {
 
   const syncToCloud = async (newProjects) => {
     setProjects(newProjects);
-    if (!user || !firebaseConfig.apiKey) return;
+    const { db, valid } = getFirebaseInstance();
+    if (!user || !valid) return;
+
     try {
       const dataDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'projects_v3');
       await setDoc(dataDocRef, { projects: newProjects }, { merge: true });
@@ -113,7 +138,7 @@ const App = () => {
     }
   };
 
-  // --- ANALYTICS ---
+  // --- ANALYTICS CALCULATIONS ---
   const stats = useMemo(() => {
     const ongoing = projects.filter(p => p.progress !== 'completed').length;
     let totalBudget = 0;
@@ -170,7 +195,7 @@ const App = () => {
     return months;
   }, [projects]);
 
-  // --- HANDLERS ---
+  // --- INTERACTION HANDLERS ---
   const handleInitiate = () => {
     const newProject = {
       ...newProjectDraft,
@@ -196,7 +221,7 @@ const App = () => {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#0a0c10]">
         <div className="w-12 h-12 border-2 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mb-4" />
-        <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest">System Booting...</p>
+        <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest">Encrypting Session...</p>
       </div>
     );
   }
@@ -205,7 +230,7 @@ const App = () => {
     <div className="min-h-screen bg-[#0a0c10] text-slate-200 p-4 md:p-12 font-sans selection:bg-blue-500/30 overflow-x-hidden">
       <div className="max-w-7xl mx-auto">
         
-        {/* Header */}
+        {/* Header Section */}
         <header className="flex flex-col md:flex-row md:items-center justify-between mb-12 gap-6">
           <div>
             <div className="flex items-center gap-3 mb-2">
@@ -234,7 +259,7 @@ const App = () => {
           </button>
         </header>
 
-        {/* Dashboard Metrics */}
+        {/* Global Statistics */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-12">
           {[
             { label: 'Ongoing Projects', val: stats.ongoing, icon: Activity, color: 'text-blue-400' },
@@ -252,16 +277,13 @@ const App = () => {
           ))}
         </div>
 
-        {/* Financial Trend Graph */}
+        {/* Financial Visualization */}
         <div className="mb-12 bg-[#11141b] border border-slate-800/60 rounded-[2.5rem] p-8 shadow-2xl overflow-hidden min-h-[420px]">
-          <div className="flex items-center justify-between mb-8">
-            <div>
-              <h2 className="text-lg font-black text-white flex items-center gap-2 uppercase tracking-tight">
-                <BarChart3 className="w-5 h-5 text-blue-500" />
-                Performance Trends
-              </h2>
-              <p className="text-[10px] text-slate-600 font-black uppercase tracking-widest mt-1">Rolling 12-Month Financial Health</p>
-            </div>
+          <div className="mb-8">
+            <h2 className="text-lg font-black text-white flex items-center gap-2 uppercase tracking-tight">
+              <BarChart3 className="w-5 h-5 text-blue-500" />
+              Financial Velocity
+            </h2>
           </div>
           
           <div className="h-[300px] w-full">
@@ -283,7 +305,7 @@ const App = () => {
           </div>
         </div>
 
-        {/* Project Feed */}
+        {/* Project List */}
         <div className="space-y-12 pb-24">
           {projects.map((project) => (
             <div key={project.id} className="bg-[#11141b] border border-slate-800/60 rounded-[2.5rem] overflow-hidden shadow-2xl transition-all hover:border-slate-700/60 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -321,13 +343,12 @@ const App = () => {
                     </div>
                   </div>
                   <div className="space-y-4">
-                    <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest flex items-center gap-2"><Tag className="w-3 h-3" /> Brief</p>
+                    <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest flex items-center gap-2"><Tag className="w-3 h-3" /> Notes</p>
                     <textarea className="w-full bg-slate-900 border border-slate-800 rounded-2xl p-5 text-xs text-slate-400 min-h-[160px] focus:ring-1 focus:ring-blue-500 outline-none resize-none leading-relaxed" value={project.notes} onChange={(e) => updateProject(project.id, { notes: e.target.value })} />
                   </div>
                 </div>
 
                 <div className="lg:col-span-8 flex flex-col bg-[#11141b]">
-                  {/* Personnel Section */}
                   <div className="p-8 border-b border-slate-800/50">
                     <div className="flex items-center justify-between mb-6">
                       <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2"><Users className="w-3 h-3" /> Personnel</h3>
@@ -340,16 +361,15 @@ const App = () => {
                             <input className="w-full bg-transparent border-none p-0 text-sm font-bold text-white uppercase" value={m.name} onChange={(e) => updateProject(project.id, { team: project.team.map(tm => tm.id === m.id ? { ...tm, name: e.target.value } : tm) })} />
                             <input className="w-full bg-transparent border-none p-0 text-[10px] text-slate-500 uppercase font-black" value={m.role} onChange={(e) => updateProject(project.id, { team: project.team.map(tm => tm.id === m.id ? { ...tm, role: e.target.value } : tm) })} />
                           </div>
-                          <button onClick={() => updateProject(project.id, { team: project.team.filter(tm => tm.id !== m.id) })} className="opacity-0 group-hover:opacity-100 text-rose-500"><Trash2 className="w-4 h-4" /></button>
+                          <button onClick={() => updateProject(project.id, { team: project.team.filter(tm => tm.id !== m.id) })} className="opacity-0 group-hover:opacity-100 text-rose-500 transition-opacity"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  {/* Expense Table */}
                   <div className="p-8 flex-1 bg-black/10">
                     <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2"><ShoppingCart className="w-3 h-3" /> Ledger</h3>
+                      <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2"><ShoppingCart className="w-3 h-3" /> Expenses</h3>
                       <button onClick={() => updateProject(project.id, { expenses: [...(project.expenses || []), { id: crypto.randomUUID(), date: new Date().toISOString().split('T')[0], name: '', reason: '', price: '' }] })} className="px-4 py-2 bg-emerald-600/10 text-emerald-500 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-600 hover:text-white transition-all">+ Log</button>
                     </div>
                     <div className="space-y-2">
@@ -377,37 +397,37 @@ const App = () => {
           <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setIsModalOpen(false)} />
           <div className="relative w-full max-w-2xl bg-[#11141b] border border-slate-800 rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
             <div className="p-8 border-b border-slate-800 flex items-center justify-between">
-              <h2 className="text-xl font-black text-white italic tracking-tight uppercase">Initiate New Asset</h2>
+              <h2 className="text-xl font-black text-white italic tracking-tight uppercase">Initiate Asset</h2>
               <button onClick={() => setIsModalOpen(false)} className="p-2 text-slate-500 hover:text-white"><X className="w-6 h-6" /></button>
             </div>
             <div className="p-8 grid grid-cols-2 gap-6">
               <div className="col-span-2 space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Project Title</label>
-                <input className="w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 text-white font-bold placeholder:text-slate-700" placeholder="e.g. DOWNTOWN HIGH-RISE" value={newProjectDraft.name} onChange={(e) => setNewProjectDraft({...newProjectDraft, name: e.target.value})} />
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Title</label>
+                <input className="w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 text-white font-bold" placeholder="e.g. PROJECT X" value={newProjectDraft.name} onChange={(e) => setNewProjectDraft({...newProjectDraft, name: e.target.value})} />
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Location</label>
-                <input className="w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 text-slate-400 text-sm" placeholder="City / District" value={newProjectDraft.location} onChange={(e) => setNewProjectDraft({...newProjectDraft, location: e.target.value})} />
+                <input className="w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 text-slate-400 text-sm" placeholder="City" value={newProjectDraft.location} onChange={(e) => setNewProjectDraft({...newProjectDraft, location: e.target.value})} />
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Map Link</label>
-                <input className="w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 text-blue-400 text-sm" placeholder="URL" value={newProjectDraft.mapLink} onChange={(e) => setNewProjectDraft({...newProjectDraft, mapLink: e.target.value})} />
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Map URL</label>
+                <input className="w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 text-blue-400 text-sm" placeholder="Link" value={newProjectDraft.mapLink} onChange={(e) => setNewProjectDraft({...newProjectDraft, mapLink: e.target.value})} />
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Contract Budget ($)</label>
-                <input className="w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 text-white font-black" placeholder="0.00" value={newProjectDraft.budget} onChange={(e) => setNewProjectDraft({...newProjectDraft, budget: e.target.value})} />
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Budget ($)</label>
+                <input className="w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 text-white font-black" placeholder="0" value={newProjectDraft.budget} onChange={(e) => setNewProjectDraft({...newProjectDraft, budget: e.target.value})} />
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Initial Deposit ($)</label>
-                <input className="w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 text-emerald-400 font-black" placeholder="0.00" value={newProjectDraft.amountPaid} onChange={(e) => setNewProjectDraft({...newProjectDraft, amountPaid: e.target.value})} />
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Deposit ($)</label>
+                <input className="w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 text-emerald-400 font-black" placeholder="0" value={newProjectDraft.amountPaid} onChange={(e) => setNewProjectDraft({...newProjectDraft, amountPaid: e.target.value})} />
               </div>
               <div className="col-span-2 pt-4">
                 <button 
                   onClick={handleInitiate}
                   disabled={!newProjectDraft.name}
-                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-20 disabled:cursor-not-allowed text-white p-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-xl shadow-blue-600/20"
+                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-20 text-white p-5 rounded-2xl font-black uppercase tracking-widest transition-all"
                 >
-                  Confirm Asset Initiation
+                  Create Project
                 </button>
               </div>
             </div>
@@ -415,13 +435,13 @@ const App = () => {
         </div>
       )}
 
-      {/* Footer */}
+      {/* Footer Meta */}
       <footer className="max-w-7xl mx-auto pt-12 opacity-20 flex flex-col md:flex-row items-center justify-between gap-4 pb-20 border-t border-slate-900">
          <div className="flex items-center gap-3">
             <ShieldCheck className="w-5 h-5 text-blue-500" />
-            <p className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-500">Security Node: {user?.uid?.slice(0, 8)}</p>
+            <p className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-500">System Verified</p>
          </div>
-         <p className="text-[9px] font-black text-slate-700 uppercase tracking-[0.3em]">UY STUDIOS PM • BUILD 3.1.2</p>
+         <p className="text-[9px] font-black text-slate-700 uppercase tracking-[0.3em]">UY STUDIOS PM • BUILD 3.1.5</p>
       </footer>
     </div>
   );
