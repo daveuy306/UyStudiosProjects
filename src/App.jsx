@@ -1,27 +1,23 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Plus, Search, Edit2, Trash2, X, MapPin, LayoutDashboard, 
-  Briefcase, BarChart3, Film, CheckCircle2, 
-  TrendingUp, Users, Calendar, 
-  UserPlus, MinusCircle, Globe
+  Briefcase, BarChart3, Film, TrendingUp, Wallet, Clock, 
+  Receipt, ChevronRight, MinusCircle, Link2, FileText, Users,
+  ChevronLeft, Menu
 } from 'lucide-react';
 import { 
   XAxis, YAxis, Tooltip, ResponsiveContainer, 
-  AreaChart, Area
+  AreaChart, Area, CartesianGrid, Legend
 } from 'recharts';
 
 // Firebase Imports
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getFirestore, collection, onSnapshot, addDoc, 
   updateDoc, deleteDoc, doc
 } from 'firebase/firestore';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 
-/**
- * VERSION: 1.0.5 - Fix Build Errors
- * Removed problematic 'Github' icon export and kept hardcoded config.
- */
 const firebaseConfig = {
   apiKey: "AIzaSyAiSo4QbPqEOX-bTvbE7BjHtOY78_fTHpY",
   authDomain: "uystudiosprojectdatabase.firebaseapp.com",
@@ -32,219 +28,291 @@ const firebaseConfig = {
   measurementId: "G-8R4PKT6WM4"
 };
 
-// Initialize services immediately
-const app = initializeApp(firebaseConfig);
+const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Fixed path for production data
 const APP_ID = 'uystudios-prod';
-const COLLECTION_PATH = ['artifacts', APP_ID, 'public', 'data', 'projects'];
+const PROJECTS_PATH = ['artifacts', APP_ID, 'public', 'data', 'projects'];
+const EXPENSES_PATH = ['artifacts', APP_ID, 'public', 'data', 'expenses'];
 const STATUS_OPTIONS = ['Completed', 'In Progress', 'Pending', 'Cancelled'];
+const EXPENSE_TYPES = ['Gear/Hardware', 'Software/SaaS', 'Travel', 'Marketing', 'Office', 'Other'];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [projects, setProjects] = useState([]);
+  const [expenses, setExpenses] = useState([]);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  
+  // Modals
+  const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
+  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [editingProject, setEditingProject] = useState(null);
+  const [editingExpense, setEditingExpense] = useState(null);
+  
+  // Dynamic Team Payroll State
   const [payrollMembers, setPayrollMembers] = useState([]);
 
-  // Auth Effect
   useEffect(() => {
     const initAuth = async () => {
-      try {
-        await signInAnonymously(auth);
-      } catch (error) {
-        console.error("Firebase Auth Error:", error);
-      }
+      try { await signInAnonymously(auth); } catch (e) { console.error(e); }
     };
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-    });
-    return () => unsubscribe();
+    return onAuthStateChanged(auth, setUser);
   }, []);
 
-  // Firestore Real-time Sync
   useEffect(() => {
     if (!user) return;
-    
     setLoading(true);
-    const colRef = collection(db, ...COLLECTION_PATH);
     
-    const unsubscribe = onSnapshot(colRef, 
-      (snapshot) => {
-        const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-        setProjects(data);
-        setLoading(false);
-      }, 
-      (err) => {
-        console.error("Firestore Permission Error:", err);
-        setLoading(false);
-      }
-    );
-    
-    return () => unsubscribe();
-  }, [user]);
+    const unsubProjects = onSnapshot(collection(db, ...PROJECTS_PATH), (s) => {
+      setProjects(s.docs.map(d => ({ ...d.data(), id: d.id })));
+    }, (err) => console.error(err));
 
-  // Dashboard Stats
-  const stats = useMemo(() => {
-    const totalRevenue = projects.reduce((sum, p) => sum + (Number(p.budget) || 0), 0);
-    const totalPayroll = projects.reduce((sum, p) => {
-      const pSum = (p.payrollMembers || []).reduce((mSum, m) => mSum + (Number(m.rate) || 0), 0);
-      return sum + pSum;
-    }, 0);
-
-    const netProfit = totalRevenue - totalPayroll;
-    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    
-    const trendsObj = {};
-    projects.forEach(p => {
-      if (!p.date) return;
-      const d = new Date(p.date);
-      const m = monthNames[d.getMonth()];
-      if (!trendsObj[m]) trendsObj[m] = { name: m, revenue: 0, payroll: 0 };
-      trendsObj[m].revenue += (Number(p.budget) || 0);
-      trendsObj[m].payroll += (p.payrollMembers || []).reduce((s, mem) => s + (Number(mem.rate) || 0), 0);
+    const unsubExpenses = onSnapshot(collection(db, ...EXPENSES_PATH), (s) => {
+      setExpenses(s.docs.map(d => ({ ...d.data(), id: d.id })));
+      setLoading(false);
+    }, (err) => {
+      console.error(err);
+      setLoading(false);
     });
 
-    const incomeChartData = monthNames
-      .map(m => trendsObj[m] || { name: m, revenue: 0, payroll: 0 })
-      .filter((_, i) => i <= new Date().getMonth());
+    return () => {
+      unsubProjects();
+      unsubExpenses();
+    };
+  }, [user]);
 
-    const statusData = STATUS_OPTIONS.map(status => ({
-      name: status,
-      value: projects.filter(p => p.status === status).length
-    }));
-
-    return { totalRevenue, totalPayroll, netProfit, incomeChartData, statusData };
-  }, [projects]);
-
-  const filteredProjects = useMemo(() => {
-    return projects.filter(p => 
-      (p.client?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-      (p.event?.toLowerCase() || '').includes(searchTerm.toLowerCase())
-    ).sort((a, b) => new Date(b.date) - new Date(a.date));
-  }, [projects, searchTerm]);
-
-  const handleOpenModal = (proj = null) => {
-    setEditingProject(proj);
-    setPayrollMembers(proj?.payrollMembers || []);
-    setIsModalOpen(true);
-  };
-
-  const handleSave = async (e) => {
-    e.preventDefault();
-    if (!user) return;
+  const stats = useMemo(() => {
+    const totalRevenue = projects.reduce((sum, p) => sum + (Number(p.budget) || 0), 0);
+    const totalPaid = projects.reduce((sum, p) => sum + (Number(p.paid) || 0), 0);
+    const totalExpenses = expenses.reduce((sum, e) => sum + (Number(e.cost) || 0), 0);
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const currentMonth = new Date().getMonth();
     
+    const chartData = [];
+    for (let i = 5; i >= 0; i--) {
+      let mIdx = currentMonth - i;
+      if (mIdx < 0) mIdx += 12;
+      chartData.push({ name: monthNames[mIdx], revenue: 0, owing: 0, exp: 0, monthIdx: mIdx });
+    }
+
+    projects.forEach(p => {
+      if (!p.date) return;
+      const mIdx = new Date(p.date).getMonth();
+      const dp = chartData.find(cd => cd.monthIdx === mIdx);
+      if (dp) {
+        dp.revenue += (Number(p.budget) || 0);
+        dp.owing += (Number(p.budget) || 0) - (Number(p.paid) || 0);
+      }
+    });
+
+    expenses.forEach(e => {
+      if (!e.date) return;
+      const mIdx = new Date(e.date).getMonth();
+      const dp = chartData.find(cd => cd.monthIdx === mIdx);
+      if (dp) dp.exp += (Number(e.cost) || 0);
+    });
+
+    return { totalRevenue, totalExpenses, outstanding: totalRevenue - totalPaid, active: projects.filter(p => p.status === 'In Progress').length, chartData };
+  }, [projects, expenses]);
+
+  const handleProjectSave = async (e) => {
+    e.preventDefault();
     const fd = new FormData(e.target);
     const data = {
       client: fd.get('client'),
       event: fd.get('event'),
       location: fd.get('location'),
       locationUrl: fd.get('locationUrl'),
+      notes: fd.get('notes'),
       date: fd.get('date'),
       budget: Number(fd.get('budget')),
+      paid: Number(fd.get('paid')),
       status: fd.get('status'),
-      payrollMembers: payrollMembers,
+      payrollMembers: payrollMembers.filter(m => m.name.trim() !== ''),
       updatedAt: new Date().toISOString()
     };
-
-    try {
-      if (editingProject) {
-        await updateDoc(doc(db, ...COLLECTION_PATH, editingProject.id), data);
-      } else {
-        await addDoc(collection(db, ...COLLECTION_PATH), { ...data, createdAt: new Date().toISOString() });
-      }
-      setIsModalOpen(false);
-    } catch (err) { 
-      console.error("Save failed:", err);
-    }
+    if (editingProject) await updateDoc(doc(db, ...PROJECTS_PATH, editingProject.id), data);
+    else await addDoc(collection(db, ...PROJECTS_PATH), { ...data, createdAt: new Date().toISOString() });
+    setIsProjectModalOpen(false);
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm("Delete this record permanently?")) return;
-    try {
-      await deleteDoc(doc(db, ...COLLECTION_PATH, id));
-    } catch (err) {
-      console.error("Delete failed:", err);
-    }
+  const handleExpenseSave = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const data = {
+      type: fd.get('type'),
+      cost: Number(fd.get('cost')),
+      date: fd.get('date'),
+      itemName: fd.get('itemName'),
+      notes: fd.get('notes'),
+      updatedAt: new Date().toISOString()
+    };
+    if (editingExpense) await updateDoc(doc(db, ...EXPENSES_PATH, editingExpense.id), data);
+    else await addDoc(collection(db, ...EXPENSES_PATH), { ...data, createdAt: new Date().toISOString() });
+    setIsExpenseModalOpen(false);
   };
 
-  if (loading && !user) {
-    return (
-      <div className="min-h-screen bg-[#020617] flex items-center justify-center">
-        <div className="animate-spin text-indigo-500"><BarChart3 size={40}/></div>
-      </div>
-    );
-  }
+  const addPayrollMember = () => {
+    setPayrollMembers([...payrollMembers, { name: '', role: '', pay: 0 }]);
+  };
+
+  const updatePayrollMember = (index, field, value) => {
+    const newMembers = [...payrollMembers];
+    newMembers[index][field] = value;
+    setPayrollMembers(newMembers);
+  };
+
+  const removePayrollMember = (index) => {
+    setPayrollMembers(payrollMembers.filter((_, i) => i !== index));
+  };
+
+  if (loading && !user) return <div className="h-screen bg-[#050810] flex items-center justify-center text-indigo-400 animate-pulse font-bold tracking-widest uppercase text-xs">Initializing UY Engine...</div>;
 
   return (
-    <div className="min-h-screen bg-[#020617] text-slate-200 flex flex-col md:flex-row font-sans">
-      {/* Sidebar */}
-      <aside className="w-64 bg-[#0F172A] border-r border-white/5 flex flex-col h-screen sticky top-0 hidden md:flex">
-        <div className="p-8">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white">
-              <Film size={20} />
+    <div className="min-h-screen bg-[#050810] text-slate-300 flex flex-col md:flex-row font-sans selection:bg-indigo-500/30 overflow-x-hidden">
+      
+      {/* Desktop Sidebar */}
+      <aside 
+        className={`bg-[#0A0D16] border-r border-white/5 hidden md:flex flex-col h-screen sticky top-0 transition-all duration-300 ease-in-out ${isSidebarCollapsed ? 'w-24' : 'w-72'}`}
+      >
+        <div className={`p-8 flex items-center mb-10 ${isSidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
+          {!isSidebarCollapsed && (
+            <div className="flex items-center gap-3">
+              <Film className="text-indigo-500" size={20}/>
+              <h1 className="text-xs font-black tracking-widest uppercase text-white">UY Studios</h1>
             </div>
-            <h1 className="text-lg font-black tracking-tighter uppercase text-white">UY Studios</h1>
-          </div>
-          <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest px-1">v1.0.5 PROD</div>
+          )}
+          {isSidebarCollapsed && <Film className="text-indigo-500" size={24}/>}
         </div>
-        <nav className="flex-1 px-4 space-y-1">
-          <SidebarLink icon={<LayoutDashboard size={18}/>} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-          <SidebarLink icon={<Briefcase size={18}/>} label="Productions" active={activeTab === 'projects'} onClick={() => setActiveTab('projects')} />
+
+        <nav className="flex-1 px-4 space-y-2">
+          <SidebarItem 
+            active={activeTab === 'dashboard'} 
+            onClick={() => setActiveTab('dashboard')} 
+            icon={<LayoutDashboard size={20}/>} 
+            label="Dashboard" 
+            collapsed={isSidebarCollapsed}
+          />
+          <SidebarItem 
+            active={activeTab === 'projects'} 
+            onClick={() => setActiveTab('projects')} 
+            icon={<Briefcase size={20}/>} 
+            label="Productions" 
+            collapsed={isSidebarCollapsed}
+          />
+          <SidebarItem 
+            active={activeTab === 'expenses'} 
+            onClick={() => setActiveTab('expenses')} 
+            icon={<Receipt size={20}/>} 
+            label="Expenses" 
+            collapsed={isSidebarCollapsed}
+          />
         </nav>
+
+        <div className="p-4 border-t border-white/5">
+          <button 
+            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            className="w-full flex items-center justify-center p-3 rounded-xl hover:bg-white/5 text-slate-500 hover:text-white transition-all"
+          >
+            {isSidebarCollapsed ? <ChevronRight size={20}/> : <div className="flex items-center gap-3 text-[11px] font-bold uppercase tracking-widest"><ChevronLeft size={16}/> Collapse</div>}
+          </button>
+        </div>
       </aside>
 
-      {/* Main Content */}
+      {/* Mobile Top Header */}
+      <div className="md:hidden flex items-center justify-between p-6 bg-[#0A0D16] border-b border-white/5">
+        <div className="flex items-center gap-3">
+          <Film className="text-indigo-500" size={20}/>
+          <h1 className="text-[10px] font-black tracking-widest uppercase text-white">UY Studios</h1>
+        </div>
+        <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 text-white">
+          <Menu size={24} />
+        </button>
+      </div>
+
+      {/* Mobile Menu Overlay */}
+      {isMobileMenuOpen && (
+        <div className="fixed inset-0 z-[100] md:hidden">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsMobileMenuOpen(false)} />
+          <div className="absolute top-0 right-0 h-full w-3/4 bg-[#0A0D16] shadow-2xl p-8 slide-in-right">
+            <div className="flex justify-between items-center mb-12">
+              <Film className="text-indigo-500" size={24}/>
+              <button onClick={() => setIsMobileMenuOpen(false)}><X size={24}/></button>
+            </div>
+            <nav className="space-y-4">
+               {['dashboard', 'projects', 'expenses'].map((tab) => (
+                 <button 
+                  key={tab}
+                  onClick={() => { setActiveTab(tab); setIsMobileMenuOpen(false); }}
+                  className={`w-full text-left p-4 rounded-2xl font-bold uppercase text-xs tracking-widest ${activeTab === tab ? 'bg-indigo-500 text-white' : 'text-slate-400'}`}
+                 >
+                   {tab}
+                 </button>
+               ))}
+            </nav>
+          </div>
+        </div>
+      )}
+
+      {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-20 border-b border-white/5 px-8 items-center justify-between bg-[#020617]/50 backdrop-blur-md hidden md:flex">
-          <div className="relative w-96">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" size={16} />
+        <header className="h-20 px-8 flex items-center justify-between bg-[#050810]/80 backdrop-blur-xl border-b border-white/5 sticky top-0 z-40">
+          <div className="relative w-full max-w-md hidden sm:block">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
             <input 
               type="text" 
-              placeholder="Filter productions..." 
-              className="bg-white/5 border border-white/5 rounded-2xl px-11 py-2 text-xs w-full outline-none focus:border-indigo-500/50"
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
+              placeholder="Filter records..." 
+              className="bg-white/5 border border-white/5 rounded-xl px-12 py-2.5 text-sm w-full focus:border-indigo-500/50 outline-none transition-all" 
+              value={searchTerm} 
+              onChange={e => setSearchTerm(e.target.value)} 
             />
           </div>
-          <button onClick={() => handleOpenModal()} className="bg-indigo-600 text-white px-6 py-2.5 rounded-2xl text-xs font-black flex items-center gap-2 hover:bg-indigo-500 transition-colors">
-            <Plus size={16} /> NEW PRODUCTION
+          <div className="sm:hidden flex-1" />
+          <button onClick={() => {
+            if(activeTab === 'expenses') {
+              setEditingExpense(null);
+              setIsExpenseModalOpen(true);
+            } else {
+              setEditingProject(null);
+              setPayrollMembers([]);
+              setIsProjectModalOpen(true);
+            }
+          }} className="bg-indigo-500 hover:bg-indigo-400 text-white px-5 py-2.5 rounded-xl text-[10px] font-black flex items-center gap-2 transition-all shadow-lg shadow-indigo-500/20 uppercase tracking-tighter shrink-0">
+            <Plus size={16}/> New Entry
           </button>
         </header>
 
-        <main className="p-4 md:p-8 space-y-8 pb-24 md:pb-8">
+        <main className="p-4 md:p-8 space-y-8 max-w-7xl mx-auto w-full">
           {activeTab === 'dashboard' && (
             <>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <StatCard label="Total Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} color="indigo" icon={<TrendingUp size={16}/>} />
-                <StatCard label="Total Cost" value={`$${stats.totalPayroll.toLocaleString()}`} color="rose" icon={<Users size={16}/>} />
-                <StatCard label="Net Profit" value={`$${stats.netProfit.toLocaleString()}`} color="emerald" icon={<CheckCircle2 size={16}/>} />
-                <StatCard label="Active Shoots" value={stats.statusData.find(d => d.name === 'In Progress')?.value || 0} color="amber" icon={<Calendar size={16}/>} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+                <StatCard label="Gross Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} icon={<TrendingUp size={16}/>} />
+                <StatCard label="Client Debt" value={`$${stats.outstanding.toLocaleString()}`} icon={<Wallet size={16}/>} warning={stats.outstanding > 0} />
+                <StatCard label="OpEx Total" value={`$${stats.totalExpenses.toLocaleString()}`} icon={<Receipt size={16}/>} />
+                <StatCard label="Live Sets" value={stats.active} icon={<Clock size={16}/>} />
               </div>
 
-              <div className="bg-[#0F172A] p-6 rounded-[2rem] border border-white/5">
-                <h3 className="text-[10px] font-black uppercase text-slate-500 mb-6 tracking-widest">Revenue vs Cost Breakdown</h3>
-                <div className="h-[250px] w-full">
+              <div className="bg-[#0A0D16] p-4 md:p-8 rounded-3xl border border-white/5 shadow-2xl">
+                <h3 className="text-[10px] font-black text-white uppercase tracking-widest mb-8 opacity-40">Financial Analytics (Rolling 6M)</h3>
+                <div className="h-[300px] md:h-[400px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={stats.incomeChartData}>
+                    <AreaChart data={stats.chartData}>
                       <defs>
-                        <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
-                          <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
-                        </linearGradient>
+                        <linearGradient id="gRev" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#6366f1" stopOpacity={0.2}/><stop offset="95%" stopColor="#6366f1" stopOpacity={0}/></linearGradient>
                       </defs>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.02)" />
                       <XAxis dataKey="name" stroke="#475569" fontSize={10} axisLine={false} tickLine={false} />
-                      <YAxis hide />
-                      <Tooltip contentStyle={{background: '#0F172A', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px'}} />
-                      <Area type="monotone" dataKey="revenue" stroke="#6366f1" fillOpacity={1} fill="url(#colorRev)" strokeWidth={3} />
-                      <Area type="monotone" dataKey="payroll" stroke="#f43f5e" fill="transparent" strokeWidth={2} strokeDasharray="5 5" />
+                      <YAxis stroke="#475569" fontSize={10} axisLine={false} tickLine={false} tickFormatter={v => `$${v}`} />
+                      <Tooltip contentStyle={{background: '#0A0D16', border: '1px solid #1e293b', borderRadius: '12px'}} />
+                      <Area type="monotone" dataKey="revenue" stroke="#6366f1" fill="url(#gRev)" strokeWidth={3} name="Revenue" />
+                      <Area type="monotone" dataKey="owing" stroke="#f43f5e" fill="none" strokeWidth={2} strokeDasharray="4 4" name="Debt" />
+                      <Area type="monotone" dataKey="exp" stroke="#f59e0b" fill="none" strokeWidth={3} name="Expenses" />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
@@ -252,124 +320,210 @@ export default function App() {
             </>
           )}
 
-          {activeTab === 'projects' && (
-            <div className="bg-[#0F172A] rounded-[2rem] border border-white/5 overflow-hidden">
-              <div className="p-6 border-b border-white/5 flex justify-between items-center">
-                <h3 className="text-xs font-black uppercase text-slate-400">Production Ledger</h3>
-                <div className="md:hidden">
-                   <button onClick={() => handleOpenModal()} className="p-2 bg-indigo-600 rounded-full text-white"><Plus size={16}/></button>
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="text-[10px] uppercase font-black tracking-widest text-slate-500 border-b border-white/5">
-                      <th className="px-6 py-4">Project</th>
-                      <th className="px-6 py-4">Location</th>
-                      <th className="px-6 py-4">Crew</th>
-                      <th className="px-6 py-4">Revenue</th>
-                      <th className="px-6 py-4">Status</th>
-                      <th className="px-6 py-4 text-right">Actions</th>
+          <div className="bg-[#0A0D16] rounded-3xl border border-white/5 overflow-hidden shadow-2xl">
+             <div className="p-6 md:p-8 border-b border-white/5 flex justify-between items-center bg-white/[0.01]">
+                <h3 className="text-[10px] font-black text-white uppercase tracking-[0.2em]">{activeTab === 'expenses' ? 'Operational Ledger' : 'Production Pipeline'}</h3>
+             </div>
+             <div className="overflow-x-auto">
+               <table className="w-full text-left">
+                  <thead className="text-[9px] font-black text-slate-500 uppercase tracking-widest border-b border-white/5">
+                    <tr>
+                      <th className="px-6 md:px-8 py-5 min-w-[200px]">{activeTab === 'expenses' ? 'ITEM' : 'PRODUCTION'}</th>
+                      <th className="px-6 md:px-8 py-5 min-w-[150px]">LOGISTICS</th>
+                      <th className="px-6 md:px-8 py-5 min-w-[120px]">FINANCE</th>
+                      <th className="px-6 md:px-8 py-5">STATUS</th>
+                      <th className="px-6 md:px-8 py-5 text-right">MGMT</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {filteredProjects.length === 0 ? (
-                      <tr><td colSpan="6" className="p-10 text-center text-slate-600 text-xs italic">No productions logged.</td></tr>
-                    ) : filteredProjects.map(p => (
-                      <tr key={p.id} className="hover:bg-white/[0.02] group">
-                        <td className="px-6 py-5">
-                          <div className="text-sm font-bold text-white">{p.client}</div>
-                          <div className="text-[10px] text-slate-500 font-medium">{p.event} • {p.date}</div>
-                        </td>
-                        <td className="px-6 py-5">
-                          {p.locationUrl ? (
-                            <a href={p.locationUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-[11px] text-indigo-400 hover:text-indigo-300">
-                              <MapPin size={12} />
-                              <span className="underline decoration-indigo-500/30 truncate max-w-[100px]">{p.location || 'Map'}</span>
-                            </a>
-                          ) : <span className="text-[11px] text-slate-600 italic">No address</span>}
-                        </td>
-                        <td className="px-6 py-5">
-                          <span className="text-xs text-slate-400 bg-white/5 px-2 py-1 rounded-lg">
-                            {p.payrollMembers?.length || 0} crew
-                          </span>
-                        </td>
-                        <td className="px-6 py-5 font-bold text-white text-xs">
-                          ${(Number(p.budget) || 0).toLocaleString()}
-                        </td>
-                        <td className="px-6 py-5">
-                          <StatusBadge status={p.status} />
-                        </td>
-                        <td className="px-6 py-5 text-right">
-                          <div className="flex gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => handleOpenModal(p)} className="p-2 text-slate-500 hover:text-indigo-400"><Edit2 size={14}/></button>
-                            <button onClick={() => handleDelete(p.id)} className="p-2 text-slate-500 hover:text-rose-400"><Trash2 size={14}/></button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                    {(activeTab === 'expenses' ? expenses : projects)
+                      .filter(i => (i.client || i.itemName || '').toLowerCase().includes(searchTerm.toLowerCase()))
+                      .map(item => (
+                        <tr key={item.id} className="hover:bg-white/[0.02] transition-colors group">
+                          <td className="px-6 md:px-8 py-6">
+                            <div className="text-sm font-bold text-white leading-none mb-2">{item.client || item.itemName}</div>
+                            <div className="text-[10px] font-bold text-slate-500 uppercase opacity-60 flex items-center gap-1.5">
+                              {item.event || item.date} 
+                              {item.payrollMembers?.length > 0 && (
+                                <span className="flex items-center gap-1 text-indigo-400">
+                                  • <Users size={10}/> {item.payrollMembers.length}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-6 md:px-8 py-6">
+                            {activeTab === 'expenses' ? (
+                              <div className="space-y-1">
+                                <span className="text-[9px] px-2 py-1 bg-white/5 rounded border border-white/5 text-slate-400 font-bold uppercase tracking-wider">{item.type}</span>
+                                {item.notes && <div className="text-[10px] text-slate-500 italic line-clamp-1 max-w-[180px]">{item.notes}</div>}
+                              </div>
+                            ) : (
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2 text-[11px] font-medium text-slate-500">
+                                  <MapPin size={12}/> {item.location || 'TBD'}
+                                  {item.locationUrl && (
+                                    <a href={item.locationUrl} target="_blank" rel="noreferrer" className="text-indigo-400 hover:text-indigo-300">
+                                      <Link2 size={12}/>
+                                    </a>
+                                  )}
+                                </div>
+                                {item.notes && <div className="text-[10px] text-slate-500 italic line-clamp-1 max-w-[180px]">{item.notes}</div>}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-6 md:px-8 py-6">
+                            <div className="text-sm font-black text-white">${(item.budget || item.cost || 0).toLocaleString()}</div>
+                            {item.budget !== undefined && (
+                              <div className={`text-[9px] font-bold mt-0.5 ${(item.budget - item.paid) > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                                {item.budget - item.paid > 0 ? `-$${(item.budget - item.paid).toLocaleString()}` : 'PAID'}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-6 md:px-8 py-6">
+                            <StatusBadge status={item.status || 'Active'} />
+                          </td>
+                          <td className="px-6 md:px-8 py-6 text-right">
+                            <div className="flex gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => {
+                                if(activeTab === 'expenses') {
+                                  setEditingExpense(item);
+                                  setIsExpenseModalOpen(true);
+                                } else {
+                                  setEditingProject(item);
+                                  setPayrollMembers(item.payrollMembers || []);
+                                  setIsProjectModalOpen(true);
+                                }
+                              }} className="p-2 hover:bg-indigo-500/10 rounded-lg text-slate-500 hover:text-indigo-400 transition-all"><Edit2 size={14}/></button>
+                              <button onClick={async () => {if(confirm("Confirm deletion?")) await deleteDoc(doc(db, ...[activeTab === 'expenses' ? EXPENSES_PATH : PROJECTS_PATH].flat(), item.id))}} className="p-2 hover:bg-rose-500/10 rounded-lg text-slate-500 hover:text-rose-500 transition-all"><Trash2 size={14}/></button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
                   </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+               </table>
+             </div>
+          </div>
         </main>
       </div>
 
-      {/* Mobile Nav */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#0F172A] border-t border-white/5 flex items-center justify-around z-50">
-        <button onClick={() => setActiveTab('dashboard')} className={activeTab === 'dashboard' ? 'text-indigo-500' : 'text-slate-500'}><LayoutDashboard size={20} /></button>
-        <button onClick={() => setActiveTab('projects')} className={activeTab === 'projects' ? 'text-indigo-500' : 'text-slate-500'}><Briefcase size={20} /></button>
-      </nav>
-
-      {/* Modal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-[#0F172A] border border-white/10 w-full max-w-2xl rounded-[2.5rem] p-8 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-8">
-              <h2 className="text-xl font-black text-white uppercase">{editingProject ? 'Edit' : 'New'} Production</h2>
-              <button onClick={() => setIsModalOpen(false)} className="p-2 text-slate-500 hover:text-white"><X /></button>
-            </div>
-
-            <form onSubmit={handleSave} className="space-y-6">
-              <div className="grid grid-cols-2 gap-4">
-                <FormInput label="Client Name" name="client" defaultValue={editingProject?.client} required />
-                <FormInput label="Event Type" name="event" defaultValue={editingProject?.event} required />
+      {/* Production Modal */}
+      {isProjectModalOpen && (
+        <div className="fixed inset-0 bg-black/95 backdrop-blur-md z-[100] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-[#0A0D16] border border-white/10 w-full max-w-4xl rounded-[2rem] p-6 md:p-10 my-8 shadow-2xl">
+            <div className="flex justify-between items-start mb-10">
+              <div>
+                <h2 className="text-2xl font-black text-white tracking-tight">Production Registry</h2>
+                <p className="text-[10px] text-slate-500 font-bold mt-1 uppercase tracking-[0.2em] opacity-50">Manage operational logistics and crew payroll</p>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <FormInput label="Venue Name" name="location" defaultValue={editingProject?.location} />
-                <FormInput label="Maps URL" name="locationUrl" defaultValue={editingProject?.locationUrl} />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <FormInput label="Shoot Date" name="date" type="date" defaultValue={editingProject?.date} required />
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest ml-1">Status</label>
-                  <select name="status" defaultValue={editingProject?.status || 'Pending'} className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-indigo-500 outline-none">
-                    {STATUS_OPTIONS.map(s => <option key={s} value={s} className="bg-[#0F172A]">{s}</option>)}
-                  </select>
-                </div>
-              </div>
-              <FormInput label="Production Fee ($)" name="budget" type="number" defaultValue={editingProject?.budget} />
-              
-              <div className="pt-4 border-t border-white/5 space-y-4">
-                <div className="flex justify-between items-center">
-                  <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Crew & Payroll</label>
-                  <button type="button" onClick={() => setPayrollMembers([...payrollMembers, { id: Date.now(), name: '', role: '', rate: '', paid: false }])} className="text-[10px] font-black text-indigo-400 flex items-center gap-1 uppercase">
-                    <UserPlus size={14}/> Add Crew
-                  </button>
-                </div>
-                {payrollMembers.map((member) => (
-                  <div key={member.id} className="flex gap-2 bg-white/5 p-3 rounded-2xl items-center border border-white/5">
-                    <input placeholder="Name" className="flex-1 bg-transparent text-xs text-white outline-none" value={member.name} onChange={(e) => setPayrollMembers(payrollMembers.map(m => m.id === member.id ? { ...m, name: e.target.value } : m))} />
-                    <input placeholder="Rate ($)" type="number" className="w-20 bg-transparent text-xs text-rose-400 outline-none font-bold text-right" value={member.rate} onChange={(e) => setPayrollMembers(payrollMembers.map(m => m.id === member.id ? { ...m, rate: e.target.value } : m))} />
-                    <button type="button" onClick={() => setPayrollMembers(payrollMembers.filter(m => m.id !== member.id))} className="text-rose-500/50 hover:text-rose-500 transition-colors"><MinusCircle size={16}/></button>
-                  </div>
-                ))}
-              </div>
-
-              <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-4 rounded-2xl uppercase tracking-widest text-xs transition-all shadow-xl shadow-indigo-500/10">
-                Update Production
+              <button onClick={() => setIsProjectModalOpen(false)} className="p-3 bg-white/5 hover:bg-white/10 rounded-full transition-all">
+                <X size={20}/>
               </button>
+            </div>
+            
+            <form onSubmit={handleProjectSave} className="space-y-12">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                <div className="space-y-6">
+                  <SectionTitle title="Client & Core" />
+                  <FormInput label="Client Name" name="client" defaultValue={editingProject?.client} required />
+                  <FormInput label="Event Description" name="event" defaultValue={editingProject?.event} required />
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormInput label="Date" name="date" type="date" defaultValue={editingProject?.date} />
+                    <div className="space-y-2">
+                       <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest ml-1">Status</label>
+                       <select name="status" defaultValue={editingProject?.status || 'Pending'} className="w-full bg-white/5 border border-white/5 rounded-xl px-5 py-3 text-sm outline-none text-white focus:border-indigo-500">
+                        {STATUS_OPTIONS.map(s => <option key={s} value={s} className="bg-[#0A0D16]">{s}</option>)}
+                       </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <SectionTitle title="Logistics & Finance" />
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormInput label="Budget ($)" name="budget" type="number" defaultValue={editingProject?.budget} />
+                    <FormInput label="Paid ($)" name="paid" type="number" defaultValue={editingProject?.paid} />
+                  </div>
+                  <FormInput label="Venue / Location" name="location" defaultValue={editingProject?.location} placeholder="Location name" />
+                  <FormInput label="Map URL" name="locationUrl" defaultValue={editingProject?.locationUrl} placeholder="Paste Maps link" />
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="flex justify-between items-center border-b border-white/5 pb-4">
+                   <SectionTitle title="Team Payroll" />
+                   <button type="button" onClick={addPayrollMember} className="flex items-center gap-2 text-[10px] font-black text-white bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 px-4 py-2 rounded-xl hover:bg-indigo-500 hover:text-white transition-all uppercase tracking-widest">
+                     <Plus size={14}/> Add Crew
+                   </button>
+                </div>
+                
+                <div className="space-y-3">
+                  {payrollMembers.length === 0 ? (
+                    <div className="bg-white/5 border border-dashed border-white/5 rounded-2xl p-10 text-center text-[10px] text-slate-500 font-bold uppercase tracking-widest">
+                      Assign team members to calculate project overhead
+                    </div>
+                  ) : (
+                    payrollMembers.map((member, idx) => (
+                      <div key={idx} className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-end bg-white/[0.02] p-5 rounded-2xl border border-white/5">
+                        <div className="sm:col-span-5">
+                          <label className="text-[9px] font-black uppercase text-slate-500 mb-2 block">Name</label>
+                          <input value={member.name} onChange={e => updatePayrollMember(idx, 'name', e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-xs outline-none text-white focus:border-indigo-500" />
+                        </div>
+                        <div className="sm:col-span-4">
+                          <label className="text-[9px] font-black uppercase text-slate-500 mb-2 block">Role</label>
+                          <input value={member.role} onChange={e => updatePayrollMember(idx, 'role', e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-xs outline-none text-white focus:border-indigo-500" />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="text-[9px] font-black uppercase text-slate-500 mb-2 block">Pay ($)</label>
+                          <input type="number" value={member.pay} onChange={e => updatePayrollMember(idx, 'pay', e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-xs outline-none text-white focus:border-indigo-500" />
+                        </div>
+                        <div className="sm:col-span-1 flex justify-center pb-1">
+                          <button type="button" onClick={() => removePayrollMember(idx)} className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-lg transition-all">
+                            <MinusCircle size={18}/>
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <SectionTitle title="Notes & Links" />
+                <textarea name="notes" defaultValue={editingProject?.notes} rows={4} placeholder="Gear list, shared folders, or delivery notes..." className="w-full bg-white/5 border border-white/5 rounded-2xl p-6 text-sm outline-none focus:border-indigo-500 transition-all resize-none text-white"></textarea>
+              </div>
+
+              <div className="pt-6 flex flex-col sm:flex-row gap-4">
+                <button type="submit" className="flex-1 bg-indigo-500 py-4 rounded-2xl font-black text-white tracking-widest hover:bg-indigo-400 transition-all uppercase shadow-lg shadow-indigo-500/20">Save Production</button>
+                <button type="button" onClick={() => setIsProjectModalOpen(false)} className="px-10 py-4 bg-white/5 border border-white/5 rounded-2xl text-xs font-black text-slate-500 hover:text-white transition-all uppercase">Discard</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Expense Modal */}
+      {isExpenseModalOpen && (
+        <div className="fixed inset-0 bg-black/95 backdrop-blur-md z-[100] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-[#0A0D16] border border-white/10 w-full max-w-lg rounded-[2.5rem] p-10 shadow-2xl my-8">
+            <h2 className="text-xl font-black text-white mb-8">Expense Entry</h2>
+            <form onSubmit={handleExpenseSave} className="space-y-6">
+              <FormInput label="Item Name" name="itemName" defaultValue={editingExpense?.itemName} required />
+              <div className="grid grid-cols-2 gap-6">
+                <FormInput label="Cost ($)" name="cost" type="number" defaultValue={editingExpense?.cost} required />
+                <FormInput label="Date" name="date" type="date" defaultValue={editingExpense?.date || new Date().toISOString().split('T')[0]} />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest ml-1">Category</label>
+                <select name="type" defaultValue={editingExpense?.type} className="w-full bg-white/5 border border-white/5 rounded-xl px-5 py-3 text-sm outline-none text-white focus:border-indigo-500">
+                  {EXPENSE_TYPES.map(t => <option key={t} value={t} className="bg-slate-900">{t}</option>)}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest ml-1">Notes</label>
+                <textarea name="notes" defaultValue={editingExpense?.notes} rows={3} placeholder="Receipt #, Vendor link, or details..." className="w-full bg-white/5 border border-white/5 rounded-xl px-5 py-3 text-sm outline-none text-white focus:border-indigo-500 transition-all resize-none"></textarea>
+              </div>
+              <button type="submit" className="w-full bg-indigo-500 py-4 rounded-2xl font-black text-white tracking-widest hover:bg-indigo-400 transition-all uppercase">Commit</button>
+              <button type="button" onClick={() => setIsExpenseModalOpen(false)} className="w-full text-[10px] font-black text-slate-600 hover:text-white py-2 uppercase tracking-widest transition-all">Cancel</button>
             </form>
           </div>
         </div>
@@ -378,46 +532,51 @@ export default function App() {
   );
 }
 
-function SidebarLink({ icon, label, active, onClick }) {
+function SidebarItem({ active, onClick, icon, label, collapsed }) {
   return (
-    <button onClick={onClick} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-black transition-all ${active ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-500 hover:bg-white/5'}`}>
-      {icon} <span className="uppercase tracking-widest">{label}</span>
+    <button 
+      onClick={onClick} 
+      className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-[12px] font-bold transition-all ${active ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-500 hover:text-white hover:bg-white/5'} ${collapsed ? 'justify-center' : ''}`}
+      title={collapsed ? label : ''}
+    >
+      {icon}
+      {!collapsed && <span>{label}</span>}
     </button>
   );
 }
 
-function StatCard({ label, value, color, icon }) {
-  const themes = {
-    indigo: 'text-indigo-400 bg-indigo-400/5 border-indigo-500/10',
-    rose: 'text-rose-400 bg-rose-400/5 border-rose-500/10',
-    emerald: 'text-emerald-400 bg-emerald-400/5 border-emerald-500/10',
-    amber: 'text-amber-400 bg-amber-400/5 border-amber-500/10'
-  };
+function SectionTitle({ title }) {
+  return <h3 className="text-[11px] font-black text-indigo-400 uppercase tracking-[0.2em]">{title}</h3>;
+}
+
+function StatCard({ label, value, icon, warning }) {
   return (
-    <div className={`p-5 rounded-3xl border ${themes[color]}`}>
-      <div className="flex justify-between items-center mb-1 text-[9px] font-black uppercase text-slate-500 tracking-widest">
-        {label} <span>{icon}</span>
+    <div className="bg-[#0A0D16] p-6 rounded-3xl border border-white/5 hover:border-white/10 transition-all duration-300 shadow-lg group">
+      <div className="flex justify-between items-center mb-4">
+        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest group-hover:text-slate-400">{label}</span>
+        <div className={`p-2 rounded-xl ${warning ? 'bg-rose-500/10 text-rose-500' : 'bg-indigo-500/10 text-indigo-400'}`}>{icon}</div>
       </div>
-      <div className="text-xl font-black text-white tracking-tight">{value}</div>
+      <div className="text-2xl font-black text-white tracking-tight">{value}</div>
     </div>
   );
 }
 
 function StatusBadge({ status }) {
-  const styles = {
-    'Completed': 'bg-emerald-400/10 text-emerald-400 border-emerald-500/20',
-    'In Progress': 'bg-amber-400/10 text-amber-400 border-amber-500/20',
-    'Pending': 'bg-slate-400/10 text-slate-400 border-slate-500/20',
-    'Cancelled': 'bg-rose-400/10 text-rose-400 border-rose-500/20'
+  const map = {
+    'Completed': 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+    'In Progress': 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20',
+    'Pending': 'text-slate-500 bg-slate-500/10 border-slate-500/20',
+    'Cancelled': 'text-rose-400 bg-rose-500/10 border-rose-500/20',
+    'Active': 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20'
   };
-  return <span className={`text-[9px] font-black px-2 py-1 rounded-md uppercase border ${styles[status]}`}>{status}</span>;
+  return <span className={`text-[9px] font-black px-2.5 py-1.5 rounded-lg border uppercase tracking-tighter shrink-0 whitespace-nowrap ${map[status]}`}>{status}</span>;
 }
 
 function FormInput({ label, ...props }) {
   return (
-    <div className="space-y-1">
+    <div className="space-y-2">
       <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest ml-1">{label}</label>
-      <input {...props} className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-indigo-500 outline-none transition-colors" />
+      <input {...props} className="w-full bg-white/5 border border-white/10 rounded-xl px-5 py-3 text-sm focus:border-indigo-500 outline-none transition-all placeholder:text-slate-700 text-white" />
     </div>
   );
 }

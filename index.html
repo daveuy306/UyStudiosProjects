@@ -1,22 +1,284 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>UY Studios Tracker</title>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UY Studios Production Tracker</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap');
-      body { 
-        font-family: 'Inter', sans-serif; 
-        background-color: #020617;
-        margin: 0;
-      }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #020617; color: #e2e8f0; overflow-x: hidden; }
+        .glass { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.05); }
+        select { appearance: none; background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e"); background-repeat: no-repeat; background-position: right 1rem center; background-size: 1em; }
+        [data-lucide] { width: 18px; height: 18px; }
+        .recharts-cartesian-grid-horizontal line, .recharts-cartesian-grid-vertical line { stroke: rgba(255,255,255,0.05); }
     </style>
-  </head>
-  <body>
+</head>
+<body>
     <div id="root"></div>
-    <!-- This path must match your local file structure (usually src/main.jsx) -->
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
-</html>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/11.1.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.1.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore-compat.js"></script>
+
+    <!-- React & Charting Dependencies -->
+    <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@0.263.1/dist/umd/lucide.min.js"></script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+        const { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } = Recharts;
+
+        const firebaseConfig = typeof __firebase_config !== 'undefined' 
+            ? JSON.parse(__firebase_config) 
+            : {
+                apiKey: "AIzaSyAiSo4QbPqEOX-bTvbE7BjHtOY78_fTHpY",
+                authDomain: "uystudiosprojectdatabase.firebaseapp.com",
+                projectId: "uystudiosprojectdatabase",
+                storageBucket: "uystudiosprojectdatabase.firebasestorage.app",
+                appId: "1:167809203911:web:9b72b71460cfd92ab8c8e2"
+            };
+
+        if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'uystudios-v2';
+
+        const STATUS_OPTIONS = ['Completed', 'In Progress', 'Pending', 'Cancelled'];
+        const ROLES = ['Director', 'DP', 'Editor', 'Grip', 'Sound', 'PA', 'Talent', 'Other'];
+
+        const Icon = ({ name, size = 18, className = "" }) => {
+            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
+            return <i data-lucide={name} className={className} style={{ width: size, height: size }}></i>;
+        };
+
+        const App = () => {
+            const [view, setView] = useState('productions'); 
+            const [projects, setProjects] = useState([]);
+            const [team, setTeam] = useState([]);
+            const [user, setUser] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [isOnline, setIsOnline] = useState(false);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [isModalOpen, setIsModalOpen] = useState(false);
+            const [editingItem, setEditingItem] = useState(null);
+
+            useEffect(() => {
+                const handleAuth = async () => {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await auth.signInWithCustomToken(__initial_auth_token);
+                        } else {
+                            await auth.signInAnonymously();
+                        }
+                    } catch (err) { console.error("Auth error", err); }
+                };
+                handleAuth();
+                return auth.onAuthStateChanged(setUser);
+            }, []);
+
+            useEffect(() => {
+                if (!user) return;
+                const projRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('projects');
+                const teamRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('team');
+                
+                const unsubProj = projRef.onSnapshot(s => {
+                    setProjects(s.docs.map(d => ({ ...d.data(), id: d.id })));
+                    setIsOnline(true);
+                }, () => setIsOnline(false));
+
+                const unsubTeam = teamRef.onSnapshot(s => {
+                    setTeam(s.docs.map(d => ({ ...d.data(), id: d.id })));
+                    setLoading(false);
+                });
+
+                return () => { unsubProj(); unsubTeam(); };
+            }, [user]);
+
+            const stats = useMemo(() => {
+                const totalBudget = projects.reduce((sum, p) => sum + (Number(p.budget) || 0), 0);
+                const totalPaidToUs = projects.reduce((sum, p) => sum + (Number(p.paid) || 0), 0);
+                const totalPayrollOwed = team.reduce((sum, t) => sum + (Number(t.amountOwed) || 0), 0);
+                const totalPayrollPaid = team.reduce((sum, t) => sum + (Number(t.amountPaid) || 0), 0);
+                
+                const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                const revenueByMonth = months.map(month => ({ name: month, revenue: 0 }));
+                
+                projects.forEach(p => {
+                    const date = p.createdAt ? new Date(p.createdAt) : new Date();
+                    revenueByMonth[date.getMonth()].revenue += (Number(p.budget) || 0);
+                });
+
+                return { 
+                    totalBudget, totalPaidToUs, 
+                    payrollOwed: totalPayrollOwed, 
+                    profit: totalBudget - totalPayrollOwed - totalPayrollPaid,
+                    graphData: revenueByMonth
+                };
+            }, [projects, team]);
+
+            const handleSave = async (e) => {
+                e.preventDefault();
+                const fd = new FormData(e.target);
+                const col = (view === 'productions' || view === 'financials') ? 'projects' : 'team';
+                const baseRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection(col);
+
+                const data = view === 'payroll' ? {
+                    name: fd.get('name'), role: fd.get('role'), projectName: fd.get('projectName'),
+                    amountOwed: Number(fd.get('amountOwed')), amountPaid: Number(fd.get('amountPaid'))
+                } : {
+                    client: fd.get('client'), event: fd.get('event'), budget: Number(fd.get('budget')),
+                    paid: Number(fd.get('paid')), status: fd.get('status')
+                };
+
+                if (editingItem) await baseRef.doc(editingItem.id).update(data);
+                else await baseRef.add({ ...data, createdAt: new Date().toISOString() });
+                
+                setIsModalOpen(false);
+                setEditingItem(null);
+            };
+
+            const deleteItem = async (id) => {
+                const col = (view === 'productions' || view === 'financials') ? 'projects' : 'team';
+                await db.collection('artifacts').doc(appId).collection('public').doc('data').collection(col).doc(id).delete();
+            };
+
+            if (loading) return <div className="h-screen flex items-center justify-center bg-[#020617] text-[10px] font-black text-slate-500 uppercase tracking-widest">Loading UY Studio...</div>;
+
+            return (
+                <div className="min-h-screen flex bg-[#020617]">
+                    {/* Sidebar */}
+                    <aside className="w-64 border-r border-white/5 hidden lg:flex flex-col p-6 sticky top-0 h-screen">
+                        <div className="flex items-center gap-3 mb-12 px-2">
+                            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-black italic">UY</div>
+                            <h1 className="font-black tracking-tighter text-white text-lg">STUDIOS</h1>
+                        </div>
+                        <nav className="space-y-1 flex-1">
+                            <NavItem onClick={() => setView('productions')} icon="film" label="Productions" active={view === 'productions'} />
+                            <NavItem onClick={() => setView('payroll')} icon="users" label="Team & Payroll" active={view === 'payroll'} />
+                            <NavItem onClick={() => setView('financials')} icon="bar-chart-3" label="Financials" active={view === 'financials'} />
+                        </nav>
+                        <div className="pt-6 border-t border-white/5 opacity-50">
+                            <div className="flex items-center gap-2 mb-2">
+                                <div className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></div>
+                                <p className="text-[10px] font-black text-white uppercase tracking-widest">{isOnline ? 'Live' : 'Syncing'}</p>
+                            </div>
+                        </div>
+                    </aside>
+
+                    {/* Main Content */}
+                    <div className="flex-1 flex flex-col min-w-0">
+                        <header className="h-20 border-b border-white/5 px-8 flex items-center justify-between sticky top-0 z-40 bg-[#020617]/80 backdrop-blur-md">
+                            <div className="flex-1 max-w-xl relative">
+                                <Icon name="search" className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" />
+                                <input type="text" placeholder={`Search ${view}...`} value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
+                                    className="w-full pl-11 pr-4 py-2.5 bg-white/5 border border-white/5 rounded-2xl text-sm outline-none text-white focus:border-indigo-500/50" />
+                            </div>
+                            <button onClick={() => { setEditingItem(null); setIsModalOpen(true); }} className="ml-4 bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2.5 rounded-xl text-[10px] font-black tracking-widest uppercase">New Entry</button>
+                        </header>
+
+                        <main className="p-8 space-y-8 max-w-7xl mx-auto w-full">
+                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+                                <StatCard label="Total Revenue" value={`$${stats.totalBudget.toLocaleString()}`} icon="dollar-sign" color="text-indigo-400" />
+                                <StatCard label="Net Profit" value={`$${stats.profit.toLocaleString()}`} icon="trending-up" color="text-emerald-400" />
+                                <StatCard label="Crew Owed" value={`$${stats.payrollOwed.toLocaleString()}`} icon="alert-circle" color="text-rose-400" />
+                                <StatCard label="Online Status" value={isOnline ? "Synced" : "Syncing"} icon="activity" color="text-slate-400" />
+                            </div>
+
+                            {(view === 'productions' || view === 'financials') && (
+                                <section className="p-8 bg-white/[0.02] border border-white/5 rounded-[2.5rem] shadow-2xl">
+                                    <div className="mb-8">
+                                        <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 mb-1">Monthly Trend</h3>
+                                        <p className="text-xl font-black text-white">Revenue Distribution</p>
+                                    </div>
+                                    <div className="h-[250px] w-full">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <AreaChart data={stats.graphData}>
+                                                <defs><linearGradient id="gRev" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/><stop offset="95%" stopColor="#6366f1" stopOpacity={0}/></linearGradient></defs>
+                                                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                                                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 10, fontWeight: 700}} dy={10} />
+                                                <YAxis axisLine={false} tickLine={false} tick={{fill: '#475569', fontSize: 10, fontWeight: 700}} tickFormatter={(v) => `$${v/1000}k`} />
+                                                <Tooltip contentStyle={{backgroundColor: '#0F172A', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '10px'}} />
+                                                <Area type="monotone" dataKey="revenue" stroke="#6366f1" strokeWidth={4} fill="url(#gRev)" />
+                                            </AreaChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </section>
+                            )}
+
+                            <section className="bg-white/[0.02] border border-white/5 rounded-[2.5rem] overflow-hidden">
+                                <table className="w-full text-left">
+                                    <thead className="text-[10px] font-black uppercase tracking-widest text-slate-500 border-b border-white/5">
+                                        <tr>
+                                            <th className="px-8 py-5">{view === 'payroll' ? 'Team Member' : 'Project'}</th>
+                                            <th className="px-8 py-5">{view === 'payroll' ? 'Role' : 'Status'}</th>
+                                            <th className="px-8 py-5 text-right">Value</th>
+                                            <th className="px-8 py-5"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-white/5">
+                                        {(view === 'payroll' ? team : projects).filter(i => (i.name || i.client || '').toLowerCase().includes(searchTerm.toLowerCase())).map(i => (
+                                            <tr key={i.id} className="hover:bg-white/[0.01] transition-colors group">
+                                                <td className="px-8 py-6 font-bold text-white text-sm">
+                                                    {i.name || i.client}
+                                                    <div className="text-[10px] text-slate-500 uppercase tracking-tighter mt-1">{i.projectName || i.event}</div>
+                                                </td>
+                                                <td className="px-8 py-6">{i.role || <Pill status={i.status} />}</td>
+                                                <td className="px-8 py-6 text-right">
+                                                    <div className="text-sm font-black text-slate-200">${Number(i.amountOwed || i.budget || 0).toLocaleString()}</div>
+                                                </td>
+                                                <td className="px-8 py-6 text-right opacity-0 group-hover:opacity-100 transition-all">
+                                                    <button onClick={() => {setEditingItem(i); setIsModalOpen(true);}} className="p-2 hover:text-white"><Icon name="edit" size={14}/></button>
+                                                    <button onClick={() => deleteItem(i.id)} className="p-2 hover:text-rose-400"><Icon name="trash-2" size={14}/></button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </section>
+                        </main>
+                    </div>
+
+                    {isModalOpen && (
+                        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-6 z-[100]">
+                            <div className="bg-[#0F172A] border border-white/10 rounded-[2.5rem] w-full max-w-lg p-8 space-y-5">
+                                <h2 className="text-[10px] font-black uppercase text-white tracking-widest">{editingItem ? 'Edit Entry' : 'New Entry'}</h2>
+                                <form onSubmit={handleSave} className="space-y-4">
+                                    {view === 'payroll' ? (
+                                        <>
+                                            <FormInput label="Name" name="name" defaultValue={editingItem?.name} />
+                                            <FormInput label="Project" name="projectName" defaultValue={editingItem?.projectName} />
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <FormInput label="Owed" name="amountOwed" type="number" defaultValue={editingItem?.amountOwed} />
+                                                <FormInput label="Paid" name="amountPaid" type="number" defaultValue={editingItem?.amountPaid} />
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <FormInput label="Client" name="client" defaultValue={editingItem?.client} />
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <FormInput label="Budget" name="budget" type="number" defaultValue={editingItem?.budget} />
+                                                <FormInput label="Paid" name="paid" type="number" defaultValue={editingItem?.paid} />
+                                            </div>
+                                            <select name="status" defaultValue={editingItem?.status || 'Pending'} className="w-full px-5 py-3.5 bg-white/5 border border-white/10 rounded-2xl text-sm text-white">
+                                                {STATUS_OPTIONS.map(s => <option key={s} value={s} className="bg-[#0F172A]">{s}</option>)}
+                                            </select>
+                                        </>
+                                    )}
+                                    <button className="w-full bg-indigo-600 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest text-white">Save Entry</button>
+                                    <button type="button" onClick={() => setIsModalOpen(false)} className="w-full text-[10px] font-black uppercase tracking-widest text-slate-500 mt-2">Cancel</button>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const NavItem = ({ icon, label, active, onClick }) => (
+            <div onClick={onClick} className={`flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer transition-all ${active ? 'bg-indigo-600/10 text-indigo-400 font-bold' : 'text-slate-500 hover:bg-white/5'}`}>
