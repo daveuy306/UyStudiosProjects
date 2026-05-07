@@ -18,7 +18,9 @@ import {
   MapPin, DollarSign, ExternalLink,
   ShieldCheck, ShoppingCart, Tag, 
   BarChart3, Activity, X, Link as LinkIcon,
-  FileText
+  FileText, ChevronLeft, ChevronRight,
+  LayoutDashboard, FolderKanban, Settings,
+  Clock, TrendingUp, AlertCircle
 } from 'lucide-react';
 import {
   XAxis,
@@ -27,42 +29,39 @@ import {
   Tooltip,
   ResponsiveContainer,
   AreaChart,
-  Area,
-  Line
+  Area
 } from 'recharts';
 
-// Global variables provided by environment
+// Configuration logic
 const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'uy-studios-db';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'uy-studios-pm';
 
 const App = () => {
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [isSidebarOpen, setSidebarOpen] = useState(true);
   const [syncStatus, setSyncStatus] = useState('connecting');
   const [projects, setProjects] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('dashboard');
   
-  // Updated Draft State with missing fields
-  const [newProjectDraft, setNewProjectDraft] = useState({
+  const [newProject, setNewProject] = useState({
     name: '',
     location: '',
     budget: '',
     amountPaid: '',
     mapLink: '',
+    filesLink: '',
     notes: '',
-    initialMember: '',
-    initialRole: '',
-    filesLink: ''
+    teamMember: '',
+    teamRole: ''
   });
 
-  // 1. Initialize Firebase & Auth
+  // Auth & Initialization
   useEffect(() => {
     if (!firebaseConfig.apiKey) {
       setSyncStatus('offline');
-      setLoading(false);
       return;
     }
-
     const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
     const auth = getAuth(app);
 
@@ -74,271 +73,322 @@ const App = () => {
           await signInAnonymously(auth);
         }
       } catch (err) {
-        console.error("Auth Error:", err);
         setSyncStatus('offline');
-      } finally {
-        setLoading(false);
       }
     };
 
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
+    return onAuthStateChanged(auth, setUser);
   }, []);
 
-  // 2. Sync Data (Mandatory Firestore Pathing)
+  // Data Sync
   useEffect(() => {
     if (!user) return;
     const db = getFirestore();
+    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'projects_v5');
     
-    // Using strict path: /artifacts/{appId}/public/data/{collectionName}
-    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'projects_v4');
-    
-    const unsubscribe = onSnapshot(docRef, (snap) => {
-      if (snap.exists()) {
-        setProjects(snap.data().projects || []);
-      }
+    return onSnapshot(docRef, (snap) => {
+      if (snap.exists()) setProjects(snap.data().projects || []);
       setSyncStatus('synced');
     }, (err) => {
-      console.error("Sync Error:", err);
       setSyncStatus('error');
     });
-
-    return () => unsubscribe();
   }, [user]);
 
-  const saveToCloud = async (updatedList) => {
+  const saveToCloud = async (updated) => {
     if (!user) return;
     const db = getFirestore();
-    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'projects_v4');
     try {
-      await setDoc(docRef, { projects: updatedList }, { merge: true });
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'projects_v5'), { projects: updated });
     } catch (err) {
-      console.error("Cloud Save Failed:", err);
+      console.error(err);
     }
   };
 
-  // Stats logic
   const stats = useMemo(() => {
-    let budget = 0, paid = 0, expenses = 0;
-    projects.forEach(p => {
-      budget += parseFloat(p.budget) || 0;
-      paid += parseFloat(p.amountPaid) || 0;
-      (p.expenses || []).forEach(e => expenses += parseFloat(e.price) || 0);
-    });
-    return { ongoing: projects.length, owing: budget - paid, revenue: paid, expenses };
-  }, [projects]);
-
-  const chartData = useMemo(() => {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'].map(m => ({ name: m, revenue: 0, expenses: 0 }));
-    // Mock data distribution for visualization
-    projects.forEach((p, i) => {
-      const idx = i % 6;
-      months[idx].revenue += (parseFloat(p.amountPaid) || 0) / (projects.length || 1);
-    });
-    return months;
-  }, [projects]);
-
-  const handleCreateProject = () => {
-    const newProject = {
-      id: crypto.randomUUID(),
-      name: newProjectDraft.name,
-      location: newProjectDraft.location,
-      budget: newProjectDraft.budget,
-      amountPaid: newProjectDraft.amountPaid,
-      mapLink: newProjectDraft.mapLink,
-      filesLink: newProjectDraft.filesLink,
-      notes: newProjectDraft.notes,
-      progress: 'in-progress',
-      team: newProjectDraft.initialMember ? [{ id: '1', name: newProjectDraft.initialMember, role: newProjectDraft.initialRole }] : [],
-      expenses: []
+    const totalBudget = projects.reduce((acc, p) => acc + (parseFloat(p.budget) || 0), 0);
+    const totalPaid = projects.reduce((acc, p) => acc + (parseFloat(p.amountPaid) || 0), 0);
+    return {
+      active: projects.length,
+      owing: totalBudget - totalPaid,
+      revenue: totalPaid,
+      growth: '+12.5%'
     };
-    
-    const updated = [...projects, newProject];
+  }, [projects]);
+
+  // Mock data for the trending graph
+  const trendData = [
+    { name: 'Week 1', val: 4000 },
+    { name: 'Week 2', val: 3000 },
+    { name: 'Week 3', val: 5000 },
+    { name: 'Week 4', val: 2780 },
+    { name: 'Week 5', val: 1890 },
+    { name: 'Week 6', val: 2390 },
+    { name: 'Week 7', val: 3490 },
+  ];
+
+  const handleCreate = () => {
+    const payload = {
+      ...newProject,
+      id: crypto.randomUUID(),
+      timestamp: Date.now(),
+      team: [{ id: '1', name: newProject.teamMember, role: newProject.teamRole }]
+    };
+    const updated = [...projects, payload];
     setProjects(updated);
     saveToCloud(updated);
     setIsModalOpen(false);
-    setNewProjectDraft({ name: '', location: '', budget: '', amountPaid: '', mapLink: '', notes: '', initialMember: '', initialRole: '', filesLink: '' });
+    setNewProject({ name: '', location: '', budget: '', amountPaid: '', mapLink: '', filesLink: '', notes: '', teamMember: '', teamRole: '' });
   };
-
-  const updateProject = (id, fields) => {
-    const updated = projects.map(p => p.id === id ? { ...p, ...fields } : p);
-    setProjects(updated);
-    saveToCloud(updated);
-  };
-
-  if (loading) return <div className="min-h-screen bg-[#0a0c10] flex items-center justify-center text-blue-500 font-black italic">CONNECTING...</div>;
 
   return (
-    <div className="min-h-screen bg-[#0a0c10] text-slate-200 p-6 md:p-10 font-sans selection:bg-blue-500/30">
-      <div className="max-w-7xl mx-auto">
+    <div className="flex min-h-screen bg-[#050505] text-[#e0e0e0] font-sans overflow-hidden">
+      
+      {/* Collapsible Sidebar */}
+      <aside className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-[#0a0a0a] border-r border-[#1a1a1a] transition-all duration-300 flex flex-col z-40`}>
+        <div className="p-6 flex items-center gap-3">
+          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+            <Briefcase className="w-5 h-5 text-white" />
+          </div>
+          {isSidebarOpen && <span className="font-black italic text-lg tracking-tighter uppercase">UY Studios</span>}
+        </div>
+
+        <nav className="flex-1 px-4 space-y-2 mt-4">
+          {[
+            { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+            { id: 'projects', icon: FolderKanban, label: 'Asset Library' },
+            { id: 'timeline', icon: Clock, label: 'Timeline' },
+            { id: 'settings', icon: Settings, label: 'Systems' }
+          ].map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`w-full flex items-center gap-4 p-3 rounded-xl transition-all ${
+                activeTab === item.id ? 'bg-blue-600/10 text-blue-500' : 'text-zinc-500 hover:text-zinc-200'
+              }`}
+            >
+              <item.icon className="w-5 h-5 min-w-[20px]" />
+              {isSidebarOpen && <span className="text-xs font-bold uppercase tracking-widest">{item.label}</span>}
+            </button>
+          ))}
+        </nav>
+
+        <button 
+          onClick={() => setSidebarOpen(!isSidebarOpen)}
+          className="p-6 text-zinc-600 hover:text-white flex items-center justify-center border-t border-[#1a1a1a]"
+        >
+          {isSidebarOpen ? <ChevronLeft /> : <ChevronRight />}
+        </button>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 flex flex-col h-screen overflow-hidden">
         
-        {/* Top Header - Reverting to requested style */}
-        <header className="flex flex-col md:flex-row md:items-center justify-between mb-10 gap-4">
+        {/* Header */}
+        <header className="h-20 border-b border-[#1a1a1a] flex items-center justify-between px-8 bg-[#050505]/80 backdrop-blur-xl shrink-0">
           <div className="flex items-center gap-4">
-            <div className="bg-blue-600 p-3 rounded-xl shadow-lg">
-              <Briefcase className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-xl font-black text-white uppercase italic tracking-tight">UY Studios Database</h1>
-              <div className="flex items-center gap-2 mt-1">
-                <div className={`w-2 h-2 rounded-full ${syncStatus === 'synced' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-                  {syncStatus === 'synced' ? 'Online Mode' : 'Offline Mode'}
-                </span>
-              </div>
+            <div className={`flex items-center gap-2 px-3 py-1 rounded-full border ${
+              syncStatus === 'synced' ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-500' : 'bg-amber-500/5 border-amber-500/20 text-amber-500'
+            }`}>
+              <div className={`w-1.5 h-1.5 rounded-full ${syncStatus === 'synced' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
+              <span className="text-[10px] font-black uppercase tracking-widest">
+                {syncStatus === 'synced' ? 'Live Sync' : 'Offline Mode'}
+              </span>
             </div>
           </div>
 
-          <button 
-            onClick={() => setIsModalOpen(true)}
-            className="bg-white hover:bg-slate-100 text-slate-950 px-6 py-3 rounded-xl font-black transition-all active:scale-95 flex items-center justify-center gap-2 uppercase text-xs tracking-tighter"
-          >
-            <Plus className="w-4 h-4" /> Initiate Asset
-          </button>
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setIsModalOpen(true)}
+              className="bg-white text-black px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-zinc-200 transition-all flex items-center gap-2"
+            >
+              <Plus className="w-3 h-3" /> Initiate Asset
+            </button>
+          </div>
         </header>
 
-        {/* Sync Warning if offline */}
-        {syncStatus !== 'synced' && (
-          <div className="mb-6 bg-rose-500/10 border border-rose-500/20 p-4 rounded-2xl flex items-center gap-3 text-rose-500">
-            <div className="bg-rose-500 rounded-full p-1"><X className="w-3 h-3 text-white" /></div>
-            <p className="text-xs font-bold uppercase tracking-tight">Cloud configuration missing. Operating in local mode.</p>
-          </div>
-        )}
-
-        {/* Metrics */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-10">
-          {[
-            { label: 'Ongoing', val: stats.ongoing, icon: Activity, color: 'text-blue-400' },
-            { label: 'Owing', val: `$${stats.owing.toLocaleString()}`, icon: DollarSign, color: 'text-rose-400' },
-            { label: 'Revenue', val: `$${stats.revenue.toLocaleString()}`, icon: BarChart3, color: 'text-emerald-400' },
-            { label: 'Expenses', val: `$${stats.expenses.toLocaleString()}`, icon: ShoppingCart, color: 'text-amber-400' }
-          ].map((s, i) => (
-            <div key={i} className="bg-[#11141b] border border-slate-800 p-5 rounded-2xl">
-              <div className="flex justify-between items-center mb-2">
-                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">{s.label}</p>
-                <s.icon className={`w-4 h-4 ${s.color} opacity-40`} />
-              </div>
-              <p className="text-xl font-black text-white">{s.val}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Project Cards */}
-        <div className="space-y-8">
-          {projects.map((project) => (
-            <div key={project.id} className="bg-[#11141b] border border-slate-800 rounded-[2rem] overflow-hidden">
-              <div className="p-6 bg-slate-900/40 border-b border-slate-800 flex justify-between items-center">
-                <h2 className="text-lg font-black text-white uppercase italic">{project.name || 'Untitled Project'}</h2>
-                <button onClick={() => {
-                  const updated = projects.filter(p => p.id !== project.id);
-                  setProjects(updated);
-                  saveToCloud(updated);
-                }} className="text-slate-600 hover:text-rose-500"><Trash2 className="w-5 h-5" /></button>
-              </div>
-              
-              <div className="grid grid-cols-1 lg:grid-cols-3 divide-y lg:divide-y-0 lg:divide-x divide-slate-800">
-                <div className="p-6 space-y-4">
-                   <div className="flex items-center gap-2 text-slate-500"><MapPin className="w-4 h-4" /><span className="text-xs uppercase font-bold">{project.location}</span></div>
-                   <div className="grid grid-cols-2 gap-4">
-                      <div className="bg-black/20 p-4 rounded-xl">
-                        <label className="text-[9px] font-black text-slate-600 uppercase block mb-1">Contract</label>
-                        <p className="text-sm font-black text-white">${project.budget}</p>
-                      </div>
-                      <div className="bg-black/20 p-4 rounded-xl">
-                        <label className="text-[9px] font-black text-slate-600 uppercase block mb-1">Paid</label>
-                        <p className="text-sm font-black text-emerald-400">${project.amountPaid}</p>
-                      </div>
-                   </div>
-                   <div className="space-y-2">
-                      <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2"><LinkIcon className="w-3 h-3" /> Links</p>
-                      {project.mapLink && <a href={project.mapLink} target="_blank" className="block text-[10px] text-blue-400 hover:underline">Location Map</a>}
-                      {project.filesLink && <a href={project.filesLink} target="_blank" className="block text-[10px] text-blue-400 hover:underline">Project Files</a>}
-                   </div>
+        {/* Dashboard Scrollable Area */}
+        <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+          
+          {/* Top Row: Trending Graph & Stats */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            {/* Trending Graph */}
+            <div className="lg:col-span-2 bg-[#0a0a0a] border border-[#1a1a1a] rounded-[2rem] p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h3 className="text-xs font-black text-zinc-500 uppercase tracking-[0.2em]">Performance Index</h3>
+                  <p className="text-2xl font-black text-white italic mt-1">Growth Forecast</p>
                 </div>
+                <div className="flex items-center gap-2 text-emerald-500 bg-emerald-500/10 px-3 py-1 rounded-full">
+                  <TrendingUp className="w-3 h-3" />
+                  <span className="text-[10px] font-black">12.5%</span>
+                </div>
+              </div>
+              <div className="h-[200px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={trendData}>
+                    <defs>
+                      <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#2563eb" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#2563eb" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1a1a1a" />
+                    <XAxis dataKey="name" hide />
+                    <YAxis hide />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '12px', fontSize: '10px', color: '#fff' }}
+                      itemStyle={{ color: '#3b82f6' }}
+                    />
+                    <Area type="monotone" dataKey="val" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorVal)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
 
-                <div className="p-6">
-                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2"><Users className="w-3 h-3" /> Team</p>
-                  <div className="space-y-2">
-                    {project.team?.map(m => (
-                      <div key={m.id} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex justify-between items-center">
+            {/* Quick Metrics */}
+            <div className="space-y-4">
+              {[
+                { label: 'Active Pipeline', value: stats.active, icon: Activity, color: 'text-blue-500' },
+                { label: 'Projected Revenue', value: `$${stats.revenue.toLocaleString()}`, icon: BarChart3, color: 'text-emerald-500' },
+                { label: 'Total Liability', value: `$${stats.owing.toLocaleString()}`, icon: AlertCircle, color: 'text-rose-500' }
+              ].map((m, i) => (
+                <div key={i} className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-2xl p-5 flex items-center justify-between">
+                  <div>
+                    <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1">{m.label}</p>
+                    <p className="text-xl font-black text-white">{m.value}</p>
+                  </div>
+                  <m.icon className={`w-5 h-5 ${m.color} opacity-40`} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Project List */}
+          <div className="space-y-6">
+            <h2 className="text-xs font-black text-zinc-500 uppercase tracking-[0.3em]">Active Asset Ledger</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {projects.map((p) => (
+                <div key={p.id} className="group bg-[#0a0a0a] border border-[#1a1a1a] hover:border-blue-500/40 rounded-[2rem] p-6 transition-all duration-300">
+                  <div className="flex justify-between items-start mb-6">
+                    <div>
+                      <h3 className="text-lg font-black text-white uppercase italic tracking-tighter">{p.name}</h3>
+                      <div className="flex items-center gap-2 mt-1 text-zinc-500">
+                        <MapPin className="w-3 h-3" />
+                        <span className="text-[9px] font-bold uppercase">{p.location}</span>
+                      </div>
+                    </div>
+                    <button onClick={() => {
+                      const updated = projects.filter(item => item.id !== p.id);
+                      setProjects(updated);
+                      saveToCloud(updated);
+                    }} className="opacity-0 group-hover:opacity-100 p-2 text-zinc-600 hover:text-rose-500 transition-all">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 mb-6">
+                    <div className="bg-[#050505] p-4 rounded-2xl border border-[#1a1a1a]">
+                      <p className="text-[8px] font-black text-zinc-600 uppercase tracking-widest mb-1">Contract</p>
+                      <p className="text-sm font-black text-white">${p.budget}</p>
+                    </div>
+                    <div className="bg-[#050505] p-4 rounded-2xl border border-[#1a1a1a]">
+                      <p className="text-[8px] font-black text-zinc-600 uppercase tracking-widest mb-1">Settled</p>
+                      <p className="text-sm font-black text-emerald-500">${p.amountPaid}</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    {p.team && p.team[0]?.name && (
+                      <div className="flex items-center gap-3 bg-blue-500/5 p-3 rounded-xl border border-blue-500/10">
+                        <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center text-blue-500">
+                          <Users className="w-4 h-4" />
+                        </div>
                         <div>
-                          <p className="text-[10px] font-black text-white uppercase">{m.name}</p>
-                          <p className="text-[9px] font-bold text-slate-600 uppercase tracking-tighter">{m.role}</p>
+                          <p className="text-[10px] font-black text-white uppercase">{p.team[0].name}</p>
+                          <p className="text-[8px] font-bold text-zinc-500 uppercase">{p.team[0].role}</p>
                         </div>
                       </div>
-                    ))}
+                    )}
+                    
+                    <div className="flex gap-2">
+                      {p.mapLink && (
+                        <a href={p.mapLink} target="_blank" className="flex-1 bg-zinc-900 hover:bg-zinc-800 p-2 rounded-lg text-[9px] font-black uppercase text-center tracking-widest">Map</a>
+                      )}
+                      {p.filesLink && (
+                        <a href={p.filesLink} target="_blank" className="flex-1 bg-zinc-900 hover:bg-zinc-800 p-2 rounded-lg text-[9px] font-black uppercase text-center tracking-widest">Files</a>
+                      )}
+                    </div>
                   </div>
                 </div>
-
-                <div className="p-6 bg-black/10">
-                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-4">Notes</p>
-                  <p className="text-xs text-slate-400 leading-relaxed italic">{project.notes || 'No notes added.'}</p>
-                </div>
-              </div>
+              ))}
             </div>
-          ))}
+          </div>
         </div>
-      </div>
+      </main>
 
-      {/* Modal - Updated with missing fields */}
+      {/* Initiation Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/90 backdrop-blur-sm" onClick={() => setIsModalOpen(false)} />
-          <div className="relative w-full max-w-2xl bg-[#0f1218] border border-slate-800 rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95">
-            <div className="p-8 border-b border-slate-800 flex items-center justify-between">
-              <h2 className="text-xl font-black text-white italic tracking-tight uppercase">Initiate Asset</h2>
-              <button onClick={() => setIsModalOpen(false)} className="text-slate-500 hover:text-white"><X className="w-6 h-6" /></button>
+          <div className="relative w-full max-w-2xl bg-[#0a0a0a] border border-[#1a1a1a] rounded-[2.5rem] shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-300">
+            <div className="p-8 border-b border-[#1a1a1a] flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-black text-white italic tracking-tight uppercase">Initiate Asset</h2>
+                <p className="text-[9px] font-bold text-zinc-600 uppercase tracking-[0.2em] mt-1">System deployment sequence</p>
+              </div>
+              <button onClick={() => setIsModalOpen(false)} className="text-zinc-600 hover:text-white"><X className="w-6 h-6" /></button>
             </div>
             
-            <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6 overflow-y-auto max-h-[70vh]">
+            <div className="p-8 grid grid-cols-2 gap-6 overflow-y-auto max-h-[70vh] custom-scrollbar">
               <div className="col-span-2 space-y-1.5">
-                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Title</label>
-                <input className="w-full bg-[#161b22] border border-slate-800 rounded-xl p-4 text-white font-bold" placeholder="e.g. PROJECT X" value={newProjectDraft.name} onChange={e => setNewProjectDraft({...newProjectDraft, name: e.target.value})} />
+                <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Project Descriptor</label>
+                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-white font-bold focus:border-blue-500 transition-all outline-none" placeholder="e.g. STUDIO REVAMP" value={newProject.name} onChange={e => setNewProject({...newProject, name: e.target.value})} />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Location</label>
-                <input className="w-full bg-[#161b22] border border-slate-800 rounded-xl p-4 text-slate-300 text-sm" placeholder="City" value={newProjectDraft.location} onChange={e => setNewProjectDraft({...newProjectDraft, location: e.target.value})} />
+                <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Geography</label>
+                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-sm outline-none" placeholder="City / Region" value={newProject.location} onChange={e => setNewProject({...newProject, location: e.target.value})} />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Map URL</label>
-                <input className="w-full bg-[#161b22] border border-slate-800 rounded-xl p-4 text-blue-400 text-sm" placeholder="Link" value={newProjectDraft.mapLink} onChange={e => setNewProjectDraft({...newProjectDraft, mapLink: e.target.value})} />
+                <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Location Link</label>
+                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-sm outline-none" placeholder="Google Maps URL" value={newProject.mapLink} onChange={e => setNewProject({...newProject, mapLink: e.target.value})} />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Budget ($)</label>
-                <input className="w-full bg-[#161b22] border border-slate-800 rounded-xl p-4 text-white font-black" placeholder="0" value={newProjectDraft.budget} onChange={e => setNewProjectDraft({...newProjectDraft, budget: e.target.value})} />
+                <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Contract Value ($)</label>
+                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-white font-black outline-none" placeholder="0.00" value={newProject.budget} onChange={e => setNewProject({...newProject, budget: e.target.value})} />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Amount Paid ($)</label>
-                <input className="w-full bg-[#161b22] border border-slate-800 rounded-xl p-4 text-emerald-400 font-black" placeholder="0" value={newProjectDraft.amountPaid} onChange={e => setNewProjectDraft({...newProjectDraft, amountPaid: e.target.value})} />
+                <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Initial Deposit ($)</label>
+                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-emerald-500 font-black outline-none" placeholder="0.00" value={newProject.amountPaid} onChange={e => setNewProject({...newProject, amountPaid: e.target.value})} />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Initial Member</label>
-                <input className="w-full bg-[#161b22] border border-slate-800 rounded-xl p-4 text-white text-sm" placeholder="Name" value={newProjectDraft.initialMember} onChange={e => setNewProjectDraft({...newProjectDraft, initialMember: e.target.value})} />
+                <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Lead Member</label>
+                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-white text-sm outline-none" placeholder="Assignee Name" value={newProject.teamMember} onChange={e => setNewProject({...newProject, teamMember: e.target.value})} />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Role</label>
-                <input className="w-full bg-[#161b22] border border-slate-800 rounded-xl p-4 text-slate-400 text-sm" placeholder="e.g. Lead" value={newProjectDraft.initialRole} onChange={e => setNewProjectDraft({...newProjectDraft, initialRole: e.target.value})} />
+                <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Designated Role</label>
+                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-zinc-400 text-sm outline-none" placeholder="e.g. Lead Designer" value={newProject.teamRole} onChange={e => setNewProject({...newProject, teamRole: e.target.value})} />
               </div>
 
               <div className="col-span-2 space-y-1.5">
-                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Pertinent Links / Files</label>
-                <input className="w-full bg-[#161b22] border border-slate-800 rounded-xl p-4 text-blue-400 text-sm" placeholder="https://..." value={newProjectDraft.filesLink} onChange={e => setNewProjectDraft({...newProjectDraft, filesLink: e.target.value})} />
+                <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Project Repository (Links / Files)</label>
+                <input className="w-full bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 text-blue-400 text-sm outline-none" placeholder="Cloud Storage / Documentation Link" value={newProject.filesLink} onChange={e => setNewProject({...newProject, filesLink: e.target.value})} />
               </div>
 
               <div className="col-span-2 pt-4">
                 <button 
-                  onClick={handleCreateProject}
-                  disabled={!newProjectDraft.name}
-                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-20 text-white p-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-xl shadow-blue-600/20"
+                  onClick={handleCreate}
+                  disabled={!newProject.name}
+                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-20 text-white p-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-xl shadow-blue-600/20 active:scale-[0.98]"
                 >
-                  Create Asset
+                  Confirm Deployment
                 </button>
               </div>
             </div>
@@ -346,12 +396,14 @@ const App = () => {
         </div>
       )}
 
-      <footer className="mt-20 border-t border-slate-900 pt-10 text-center opacity-20">
-         <div className="flex items-center justify-center gap-3 mb-2">
-            <ShieldCheck className="w-4 h-4 text-blue-500" />
-            <p className="text-[8px] font-black uppercase tracking-[0.4em] text-slate-500">Encrypted Terminal</p>
-         </div>
-      </footer>
+      {/* Global CSS for scrollbars */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1a1a1a; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #2a2a2a; }
+      `}} />
+
     </div>
   );
 };
