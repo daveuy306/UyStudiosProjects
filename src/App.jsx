@@ -6,12 +6,14 @@ import {
   onSnapshot, 
   doc, 
   setDoc, 
-  query,
+  query
+} from 'firebase/firestore';
+import { 
   getAuth,
   signInWithCustomToken,
   signInAnonymously,
   onAuthStateChanged
-} from 'firebase/firestore';
+} from 'firebase/auth'; // Fixed: Auth functions moved to firebase/auth
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area,
   BarChart, Bar, Cell
@@ -23,14 +25,15 @@ import {
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION & INITIALIZATION ---
-// Safe parsing of environment variables to prevent black-screen crashes
 let firebaseApp;
 let auth;
 let db;
 let appId = 'default-app-id';
 
 try {
-  const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+  const configSource = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
+  const firebaseConfig = JSON.parse(configSource);
+  
   if (firebaseConfig.apiKey) {
     firebaseApp = initializeApp(firebaseConfig);
     auth = getAuth(firebaseApp);
@@ -57,7 +60,7 @@ const App = () => {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
 
-  // --- AUTHENTICATION FLOW (RULE 3) ---
+  // --- AUTHENTICATION FLOW ---
   useEffect(() => {
     if (!auth) {
       setError("Cloud configuration missing. Operating in local mode.");
@@ -86,11 +89,10 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
-  // --- DATA SYNC FLOW (RULE 1 & 2) ---
+  // --- DATA SYNC FLOW ---
   useEffect(() => {
     if (!user || !db) return;
 
-    // We use a single document for the main dashboard state to keep it simple and reactive
     const dataDoc = doc(db, 'artifacts', appId, 'public', 'data', 'dashboard_main');
 
     const unsubscribe = onSnapshot(dataDoc, 
@@ -149,20 +151,17 @@ const App = () => {
     };
   }, [data]);
 
-  // Loading State UI
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-950 text-white p-6">
         <Loader2 className="w-12 h-12 text-blue-500 animate-spin mb-4" />
         <h2 className="text-xl font-medium tracking-tight">Initializing Secure Connection...</h2>
-        <p className="text-slate-400 mt-2">Connecting to uystudiosdatabase.pages.dev</p>
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
-      {/* Header */}
       <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -208,7 +207,6 @@ const App = () => {
 
         {activeTab === 'overview' && (
           <div className="space-y-8 animate-in fade-in duration-500">
-            {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {[
                 { label: 'Monthly Burn', value: `$${stats.monthlyBurn.toLocaleString()}`, icon: TrendingUp, color: 'text-rose-400' },
@@ -227,14 +225,9 @@ const App = () => {
               ))}
             </div>
 
-            {/* Growth Chart */}
             <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl h-[400px]">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="font-bold text-lg">Financial Trajectory</h3>
-                <div className="flex gap-4 text-xs font-semibold text-slate-500">
-                  <span className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-blue-500"></div> Revenue</span>
-                  <span className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-rose-500"></div> Expenses</span>
-                </div>
               </div>
               <ResponsiveContainer width="100%" height="90%">
                 <AreaChart data={data.revenue.length > 0 ? data.revenue : [{month: 'Jan', amount: 0}]}>
@@ -267,7 +260,7 @@ const App = () => {
               </div>
               <button 
                 onClick={addTeamMember}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-lg active:scale-95"
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all"
               >
                 <Plus className="w-4 h-4" /> Add Member
               </button>
@@ -324,20 +317,13 @@ const App = () => {
                             setData(newData);
                             saveData(newData);
                           }}
-                          className="text-slate-500 hover:text-rose-400 p-2 rounded-lg hover:bg-rose-400/10 transition-all opacity-0 group-hover:opacity-100"
+                          className="text-slate-500 hover:text-rose-400 p-2 rounded-lg opacity-0 group-hover:opacity-100"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </td>
                     </tr>
                   ))}
-                  {data.team.length === 0 && (
-                    <tr>
-                      <td colSpan="4" className="px-6 py-12 text-center text-slate-500 italic">
-                        No team members registered. Click "Add Member" to start.
-                      </td>
-                    </tr>
-                  )}
                 </tbody>
               </table>
             </div>
@@ -348,17 +334,15 @@ const App = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in zoom-in-95 duration-500">
             <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl">
               <h3 className="font-bold mb-4">Manual Revenue Logs</h3>
-              <p className="text-slate-400 text-sm mb-6">Historical revenue data for forecasting</p>
               <div className="space-y-3">
-                {['Jan', 'Feb', 'Mar', 'Apr'].map((month, i) => (
+                {['Jan', 'Feb', 'Mar', 'Apr'].map((month) => (
                   <div key={month} className="flex items-center justify-between bg-slate-800/40 p-3 rounded-xl">
                     <span className="font-medium">{month} 2024</span>
                     <div className="flex items-center gap-2">
                       <span className="text-slate-500">$</span>
                       <input 
                         type="number" 
-                        placeholder="0"
-                        className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 w-28 text-right focus:ring-1 focus:ring-blue-500"
+                        className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 w-28 text-right"
                       />
                     </div>
                   </div>
@@ -371,10 +355,6 @@ const App = () => {
                 <CheckCircle2 className="w-8 h-8 text-blue-500" />
               </div>
               <h3 className="font-bold text-lg mb-2">Automated Sync Active</h3>
-              <p className="text-slate-400 text-sm max-w-xs">
-                All financial data is currently being pulled from the primary ledger document. 
-                Any changes made on connected devices will appear here instantly.
-              </p>
             </div>
           </div>
         )}
@@ -382,10 +362,9 @@ const App = () => {
 
       <footer className="max-w-7xl mx-auto p-8 mt-12 border-t border-slate-900">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-slate-500 text-sm">
-          <p>© 2024 UY Studios Database System. All rights reserved.</p>
+          <p>© 2024 UY Studios Database System</p>
           <div className="flex gap-6">
-            <span className="flex items-center gap-1.5"><Database className="w-4 h-4" /> Cloud Status: <span className="text-emerald-500 font-bold">Online</span></span>
-            <span className="flex items-center gap-1.5"><Briefcase className="w-4 h-4" /> Workspace: <span className="text-slate-300 font-bold">{appId}</span></span>
+            <span className="flex items-center gap-1.5"><Database className="w-4 h-4" /> Workspace: {appId}</span>
           </div>
         </div>
       </footer>
