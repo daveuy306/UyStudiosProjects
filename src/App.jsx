@@ -7,7 +7,6 @@ import {
   onSnapshot, 
   query, 
   doc, 
-  setDoc,
   deleteDoc
 } from 'firebase/firestore';
 import { 
@@ -20,32 +19,43 @@ import {
   Plus, 
   X, 
   DollarSign, 
-  User, 
-  Briefcase, 
-  Calendar, 
-  FileText, 
-  AlertCircle,
-  Loader2,
-  ChevronDown,
-  Trash2,
-  Users
+  Loader2, 
+  ChevronDown, 
+  Trash2, 
+  Users,
+  FileText,
+  AlertCircle
 } from 'lucide-react';
 
-// --- Firebase Configuration ---
-// These global variables are provided by the environment at runtime
-const firebaseConfig = JSON.parse(__firebase_config);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'expense-tracker-v1';
+// --- Safe Configuration Setup ---
+const getAppConfig = () => {
+  try {
+    const config = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+    const id = typeof __app_id !== 'undefined' ? __app_id : 'expense-tracker-v1';
+    const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+    return { config, id, token };
+  } catch (e) {
+    console.error("Config parse error", e);
+    return { config: null, id: 'expense-tracker-v1', token: null };
+  }
+};
 
-// Initialize Firebase services immediately
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+const { config: firebaseConfig, id: appId, token: initialToken } = getAppConfig();
+
+// Initialize Firebase only if config exists
+let db, auth;
+if (firebaseConfig) {
+  const app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+  auth = getAuth(app);
+}
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [expenses, setExpenses] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
   
   const [formData, setFormData] = useState({
     category: 'Equipment',
@@ -57,47 +67,49 @@ export default function App() {
     pay: ''
   });
 
-  // 1. Mandatory Authentication Flow
+  // 1. Authentication Flow
   useEffect(() => {
+    if (!auth) {
+      setIsLoading(false);
+      return;
+    }
+
     const initAuth = async () => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
+        if (initialToken) {
+          await signInWithCustomToken(auth, initialToken);
         } else {
           await signInAnonymously(auth);
         }
       } catch (err) {
-        console.error("Authentication failed:", err);
+        console.error("Auth error:", err);
+        setError("Database connection failed. Please refresh.");
       }
     };
 
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
-      setIsInitialLoading(false);
+      setIsLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
-  // 2. Real-time Data Syncing (Across Devices)
+  // 2. Real-time Data Syncing
   useEffect(() => {
-    if (!user) return;
+    if (!user || !db) return;
 
-    // RULE 1: Use the strict public data path for global syncing
     const expensesCol = collection(db, 'artifacts', appId, 'public', 'data', 'expenses');
     
-    // RULE 2: Simple query to avoid index requirements
     const unsubscribe = onSnapshot(expensesCol, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ 
         id: doc.id, 
         ...doc.data() 
       }));
-      
-      // Sort by date (descending) in memory
-      const sortedData = data.sort((a, b) => new Date(b.date) - new Date(a.date));
-      setExpenses(sortedData);
-    }, (error) => {
-      console.error("Firestore sync error:", error);
+      // Sort by date descending
+      setExpenses(data.sort((a, b) => new Date(b.date) - new Date(a.date)));
+    }, (err) => {
+      console.error("Sync error:", err);
     });
 
     return () => unsubscribe();
@@ -105,190 +117,154 @@ export default function App() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!user) return;
+    if (!user || !db) return;
 
     try {
       const expensesCol = collection(db, 'artifacts', appId, 'public', 'data', 'expenses');
-      
-      const payload = {
-        category: formData.category,
+      await addDoc(expensesCol, {
+        ...formData,
         amount: parseFloat(formData.amount) || 0,
         pay: parseFloat(formData.pay) || 0,
-        date: formData.date,
-        reason: formData.reason,
-        teamMember: formData.teamMember,
-        role: formData.role,
         createdBy: user.uid,
-        userName: user.isAnonymous ? 'Guest User' : user.displayName || user.email || 'Team Member',
         createdAt: new Date().toISOString()
-      };
-
-      await addDoc(expensesCol, payload);
+      });
       
       setIsModalOpen(false);
       setFormData({
-        category: 'Equipment',
-        amount: '',
-        date: new Date().toISOString().split('T')[0],
-        reason: '',
-        teamMember: '',
-        role: '',
-        pay: ''
+        category: 'Equipment', amount: '', date: new Date().toISOString().split('T')[0],
+        reason: '', teamMember: '', role: '', pay: ''
       });
     } catch (err) {
-      console.error("Failed to save expense:", err);
+      console.error("Save error:", err);
     }
   };
 
   const deleteExpense = async (id) => {
-    if (!confirm('Are you sure you want to delete this record?')) return;
+    if (!db) return;
     try {
-      const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'expenses', id);
-      await deleteDoc(docRef);
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'expenses', id));
     } catch (err) {
-      console.error("Delete failed:", err);
+      console.error("Delete error:", err);
     }
   };
 
-  if (isInitialLoading) {
+  if (!firebaseConfig) {
     return (
-      <div className="min-h-screen bg-[#0f111a] flex flex-col items-center justify-center text-slate-400">
-        <Loader2 className="w-10 h-10 animate-spin text-pink-500 mb-4" />
-        <p>Connecting to secure database...</p>
+      <div className="min-h-screen bg-[#0f111a] flex items-center justify-center p-6 text-center">
+        <div className="max-w-md space-y-4">
+          <AlertCircle className="w-12 h-12 text-pink-500 mx-auto" />
+          <h1 className="text-xl font-bold text-white">Missing Configuration</h1>
+          <p className="text-slate-400 text-sm">
+            The environment variables are not yet available. Please wait a moment or ensure you are in a live project session.
+          </p>
+          <div className="pt-4">
+             <Loader2 className="w-6 h-6 animate-spin text-slate-700 mx-auto" />
+          </div>
+        </div>
       </div>
     );
   }
 
-  const totalSpend = expenses.reduce((acc, curr) => acc + (curr.amount || 0) + (curr.pay || 0), 0);
-  const totalLabor = expenses.reduce((acc, curr) => acc + (curr.pay || 0), 0);
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[#0f111a] flex items-center justify-center">
+        <Loader2 className="w-10 h-10 animate-spin text-pink-500" />
+      </div>
+    );
+  }
+
+  const totals = expenses.reduce((acc, curr) => ({
+    total: acc.total + (curr.amount || 0) + (curr.pay || 0),
+    labor: acc.labor + (curr.pay || 0)
+  }), { total: 0, labor: 0 });
 
   return (
-    <div className="min-h-screen bg-[#0f111a] text-slate-200 font-sans selection:bg-pink-500/30">
-      {/* Top Navigation */}
+    <div className="min-h-screen bg-[#0f111a] text-slate-200 font-sans">
       <nav className="border-b border-slate-800 bg-[#0f111a]/80 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-pink-600 rounded-lg flex items-center justify-center">
+            <div className="w-8 h-8 bg-pink-600 rounded-lg flex items-center justify-center shadow-lg shadow-pink-900/20">
               <DollarSign className="text-white w-5 h-5" />
             </div>
-            <span className="font-bold text-lg tracking-tight text-white">ProjectTracker</span>
+            <span className="font-bold text-lg text-white tracking-tight">SyncTracker</span>
           </div>
-          <div className="flex items-center gap-4">
-             <div className="hidden md:block text-xs font-medium px-3 py-1 bg-green-500/10 text-green-400 rounded-full border border-green-500/20">
-               Live Sync Active
-             </div>
-             <span className="text-xs text-slate-500 font-mono">User: {user?.uid?.slice(0, 8)}...</span>
+          <div className="flex items-center gap-3">
+             <div className="px-3 py-1 bg-green-500/10 text-green-400 text-[10px] font-bold rounded-full border border-green-500/20 uppercase">Live Sync</div>
+             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
           </div>
         </div>
       </nav>
 
       <main className="max-w-6xl mx-auto p-4 md:p-8">
-        {/* Header Section */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
           <div>
-            <h1 className="text-4xl font-extrabold text-white mb-2">Financial Dashboard</h1>
-            <p className="text-slate-500">Real-time expenditure tracking for your project team.</p>
+            <h1 className="text-4xl font-black text-white mb-2 italic">Dashboard</h1>
+            <p className="text-slate-500 font-medium">Real-time expenditure & labor tracking.</p>
           </div>
           <button 
             onClick={() => setIsModalOpen(true)}
-            className="bg-pink-600 hover:bg-pink-700 text-white px-8 py-4 rounded-2xl font-bold flex items-center justify-center gap-3 transition-all transform hover:scale-[1.02] active:scale-95 shadow-xl shadow-pink-900/20"
+            className="bg-pink-600 hover:bg-pink-700 text-white px-8 py-4 rounded-2xl font-black flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl shadow-pink-900/30 uppercase tracking-wider text-sm"
           >
-            <Plus size={22} strokeWidth={3} /> Record Expense
+            <Plus size={20} strokeWidth={3} /> Add New Entry
           </button>
         </div>
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10 text-left">
           <div className="bg-[#161b2c] p-8 rounded-[2rem] border border-slate-800 shadow-sm">
-            <div className="w-12 h-12 bg-slate-800 rounded-2xl flex items-center justify-center mb-4">
-              <DollarSign className="text-slate-400" />
-            </div>
-            <p className="text-slate-400 text-sm font-semibold uppercase tracking-wider mb-1">Total Expenditure</p>
-            <h2 className="text-4xl font-black text-white">${totalSpend.toLocaleString()}</h2>
+            <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-2">Total Spend</p>
+            <h2 className="text-4xl font-black text-white tracking-tighter">${totals.total.toLocaleString()}</h2>
           </div>
-
-          <div className="bg-[#161b2c] p-8 rounded-[2rem] border border-slate-800 shadow-sm relative overflow-hidden group">
-            <div className="absolute top-0 right-0 p-4 opacity-10">
-              <Users size={80} />
-            </div>
-            <div className="w-12 h-12 bg-pink-500/10 rounded-2xl flex items-center justify-center mb-4">
-              <Users className="text-pink-500" />
-            </div>
-            <p className="text-slate-400 text-sm font-semibold uppercase tracking-wider mb-1">Total Labor Cost</p>
-            <h2 className="text-4xl font-black text-pink-500">${totalLabor.toLocaleString()}</h2>
+          <div className="bg-[#161b2c] p-8 rounded-[2rem] border border-slate-800 shadow-sm border-l-pink-600/50">
+            <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-2">Total Labor</p>
+            <h2 className="text-4xl font-black text-pink-500 tracking-tighter">${totals.labor.toLocaleString()}</h2>
           </div>
-
           <div className="bg-[#161b2c] p-8 rounded-[2rem] border border-slate-800 shadow-sm">
-            <div className="w-12 h-12 bg-slate-800 rounded-2xl flex items-center justify-center mb-4">
-              <FileText className="text-slate-400" />
-            </div>
-            <p className="text-slate-400 text-sm font-semibold uppercase tracking-wider mb-1">Total Items</p>
-            <h2 className="text-4xl font-black text-white">{expenses.length}</h2>
+            <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-2">Total Items</p>
+            <h2 className="text-4xl font-black text-white tracking-tighter">{expenses.length}</h2>
           </div>
         </div>
 
-        {/* Expenses List */}
         <div className="bg-[#161b2c] rounded-[2rem] border border-slate-800 shadow-sm overflow-hidden">
-          <div className="p-6 border-b border-slate-800 flex justify-between items-center">
-            <h3 className="font-bold text-white text-lg">Transaction History</h3>
-            <div className="text-xs text-slate-500 uppercase tracking-widest font-bold">Updated Just Now</div>
+          <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/30">
+            <h3 className="font-bold text-white uppercase text-xs tracking-widest flex items-center gap-2">
+              <FileText size={14} className="text-pink-500" /> Transaction History
+            </h3>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-900/50 text-slate-500 text-[10px] uppercase tracking-[0.2em]">
-                  <th className="px-8 py-5 font-bold">Date</th>
-                  <th className="px-8 py-5 font-bold">Category</th>
-                  <th className="px-8 py-5 font-bold">Team Member</th>
-                  <th className="px-8 py-5 font-bold">Details</th>
-                  <th className="px-8 py-5 font-bold text-right">Cost</th>
-                  <th className="px-8 py-5 font-bold text-center">Actions</th>
+                <tr className="text-slate-500 text-[10px] uppercase tracking-[0.2em]">
+                  <th className="px-8 py-5 font-black">Date</th>
+                  <th className="px-8 py-5 font-black">Team Member</th>
+                  <th className="px-8 py-5 font-black">Details</th>
+                  <th className="px-8 py-5 font-black text-right">Total Cost</th>
+                  <th className="px-8 py-5 font-black text-center">Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/50">
+              <tbody className="divide-y divide-slate-800/50 text-left">
                 {expenses.length === 0 ? (
                   <tr>
-                    <td colSpan="6" className="px-8 py-20 text-center">
-                      <div className="flex flex-col items-center gap-3">
-                        <FileText className="w-12 h-12 text-slate-700" />
-                        <p className="text-slate-500 font-medium">No records found. Click 'Record Expense' to start syncing.</p>
-                      </div>
-                    </td>
+                    <td colSpan="5" className="px-8 py-20 text-center text-slate-600 italic font-medium">No records found.</td>
                   </tr>
                 ) : (
                   expenses.map((exp) => (
                     <tr key={exp.id} className="hover:bg-white/[0.02] transition-colors group">
+                      <td className="px-8 py-6 text-sm text-slate-400 font-mono">{exp.date}</td>
                       <td className="px-8 py-6">
-                        <div className="text-sm font-medium text-slate-400">{exp.date}</div>
+                        <div className="font-black text-white leading-tight uppercase text-xs tracking-wide">{exp.teamMember || 'General'}</div>
+                        <div className="text-[10px] text-slate-500 font-bold uppercase mt-1 tracking-wider">{exp.role || 'Unassigned'}</div>
                       </td>
                       <td className="px-8 py-6">
-                        <span className="px-3 py-1 bg-slate-800 text-slate-300 rounded-full text-[10px] font-bold border border-slate-700">
-                          {exp.category}
-                        </span>
-                      </td>
-                      <td className="px-8 py-6">
-                        <div className="font-bold text-white leading-tight">{exp.teamMember || 'General'}</div>
-                        <div className="text-[11px] text-slate-500 mt-0.5">{exp.role || 'Unassigned'}</div>
-                      </td>
-                      <td className="px-8 py-6">
-                        <div className="text-sm text-slate-300 max-w-xs truncate">{exp.reason}</div>
+                        <div className="text-xs text-slate-400 max-w-xs">{exp.reason}</div>
                       </td>
                       <td className="px-8 py-6 text-right">
-                        <div className="font-black text-white text-lg tracking-tight">
+                        <div className="font-black text-white text-lg tracking-tighter">
                           ${((exp.amount || 0) + (exp.pay || 0)).toLocaleString()}
                         </div>
-                        {exp.pay > 0 && (
-                          <div className="text-[10px] font-bold text-pink-500 mt-1 uppercase tracking-tighter">
-                            Incl. ${exp.pay} Pay
-                          </div>
-                        )}
                       </td>
                       <td className="px-8 py-6 text-center">
-                        <button 
-                          onClick={() => deleteExpense(exp.id)}
-                          className="p-2 text-slate-600 hover:text-red-500 transition-colors"
-                        >
-                          <Trash2 size={18} />
+                        <button onClick={() => deleteExpense(exp.id)} className="p-2 text-slate-700 hover:text-red-500 transition-colors">
+                          <Trash2 size={16} />
                         </button>
                       </td>
                     </tr>
@@ -300,119 +276,97 @@ export default function App() {
         </div>
       </main>
 
-      {/* Modern Add Expense Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
-          <div className="bg-[#161b2c] w-full max-w-xl rounded-[2.5rem] border border-slate-800 shadow-2xl relative overflow-hidden animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-[#161b2c] w-full max-w-xl rounded-[2.5rem] border border-slate-800 shadow-2xl relative overflow-hidden">
             <div className="p-10">
-              <div className="flex justify-between items-center mb-10">
-                <div>
-                  <h2 className="text-4xl font-black text-pink-500 italic">Record Expense</h2>
-                  <p className="text-slate-500 text-sm mt-1">This data will sync instantly to all devices.</p>
-                </div>
-                <button 
-                  onClick={() => setIsModalOpen(false)} 
-                  className="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center text-slate-400 hover:text-white transition-colors"
-                >
+              <div className="flex justify-between items-center mb-8">
+                <h2 className="text-3xl font-black text-pink-500 italic tracking-tighter uppercase">New Record</h2>
+                <button onClick={() => setIsModalOpen(false)} className="text-slate-500 hover:text-white">
                   <X size={24} />
                 </button>
               </div>
 
-              <form onSubmit={handleSubmit} className="space-y-6">
-                <div className="grid grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Item Category</label>
-                    <div className="relative">
-                      <select 
-                        value={formData.category}
-                        onChange={(e) => setFormData({...formData, category: e.target.value})}
-                        className="w-full bg-[#0f111a] border border-slate-800 rounded-2xl px-5 py-4 text-white appearance-none focus:outline-none focus:ring-2 focus:ring-pink-600 transition-all font-semibold"
-                      >
-                        <option>Equipment</option>
-                        <option>Labor / Payroll</option>
-                        <option>Marketing</option>
-                        <option>Software</option>
-                        <option>Travel</option>
-                        <option>Production</option>
-                      </select>
-                      <ChevronDown className="absolute right-5 top-5 text-slate-500 pointer-events-none" size={18} />
-                    </div>
+              <form onSubmit={handleSubmit} className="space-y-5 text-left">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Category</label>
+                    <select 
+                      value={formData.category}
+                      onChange={(e) => setFormData({...formData, category: e.target.value})}
+                      className="w-full bg-[#0f111a] border border-slate-800 rounded-xl px-4 py-3 text-white font-bold focus:outline-none focus:ring-1 focus:ring-pink-600"
+                    >
+                      <option>Equipment</option>
+                      <option>Labor</option>
+                      <option>Software</option>
+                      <option>Travel</option>
+                    </select>
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Date of Expense</label>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Date</label>
                     <input 
                       type="date"
                       value={formData.date}
                       onChange={(e) => setFormData({...formData, date: e.target.value})}
-                      className="w-full bg-[#0f111a] border border-slate-800 rounded-2xl px-5 py-4 text-white focus:outline-none focus:ring-2 focus:ring-pink-600 transition-all font-semibold"
+                      className="w-full bg-[#0f111a] border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-1 focus:ring-pink-600"
                     />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-[10px] font-black text-pink-500 uppercase tracking-[0.2em] mb-3 italic">Item/Service Cost ($)</label>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-pink-500 uppercase tracking-widest">Item Cost ($)</label>
                     <input 
-                      type="number"
-                      step="0.01"
+                      type="number" step="0.01" required placeholder="0.00"
                       value={formData.amount}
                       onChange={(e) => setFormData({...formData, amount: e.target.value})}
-                      className="w-full bg-[#0f111a] border border-slate-800 rounded-2xl px-5 py-4 text-pink-400 text-xl font-black focus:outline-none focus:ring-2 focus:ring-pink-600 transition-all"
-                      placeholder="0.00"
-                      required
+                      className="w-full bg-[#0f111a] border border-slate-800 rounded-xl px-4 py-3 text-white font-black text-lg focus:outline-none"
                     />
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Team Member Pay ($)</label>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Member Pay ($)</label>
                     <input 
-                      type="number"
-                      step="0.01"
+                      type="number" step="0.01" placeholder="0.00"
                       value={formData.pay}
                       onChange={(e) => setFormData({...formData, pay: e.target.value})}
-                      className="w-full bg-[#0f111a] border border-slate-800 rounded-2xl px-5 py-4 text-white text-xl font-black focus:outline-none focus:ring-2 focus:ring-pink-600 transition-all"
-                      placeholder="0.00"
+                      className="w-full bg-[#0f111a] border border-slate-800 rounded-xl px-4 py-3 text-white font-black text-lg focus:outline-none"
                     />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Team Member Name</label>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Member Name</label>
                     <input 
-                      type="text"
+                      type="text" placeholder="John Doe"
                       value={formData.teamMember}
                       onChange={(e) => setFormData({...formData, teamMember: e.target.value})}
-                      className="w-full bg-[#0f111a] border border-slate-800 rounded-2xl px-5 py-4 text-white font-bold focus:outline-none focus:ring-2 focus:ring-pink-600 transition-all"
-                      placeholder="Member name"
+                      className="w-full bg-[#0f111a] border border-slate-800 rounded-xl px-4 py-3 text-white font-bold"
                     />
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Role / Responsibility</label>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Member Role</label>
                     <input 
-                      type="text"
+                      type="text" placeholder="Manager"
                       value={formData.role}
                       onChange={(e) => setFormData({...formData, role: e.target.value})}
-                      className="w-full bg-[#0f111a] border border-slate-800 rounded-2xl px-5 py-4 text-white font-bold focus:outline-none focus:ring-2 focus:ring-pink-600 transition-all"
-                      placeholder="e.g. Lead Dev"
+                      className="w-full bg-[#0f111a] border border-slate-800 rounded-xl px-4 py-3 text-white font-bold"
                     />
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Reason / Description</label>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Description</label>
                   <textarea 
+                    placeholder="Brief details..."
                     value={formData.reason}
                     onChange={(e) => setFormData({...formData, reason: e.target.value})}
-                    className="w-full bg-[#0f111a] border border-slate-800 rounded-2xl px-5 py-4 text-white min-h-[100px] focus:outline-none focus:ring-2 focus:ring-pink-600 transition-all font-medium"
-                    placeholder="Briefly describe what this expense was for..."
+                    className="w-full bg-[#0f111a] border border-slate-800 rounded-xl px-4 py-3 text-white min-h-[80px]"
                   />
                 </div>
 
-                <button 
-                  type="submit"
-                  className="w-full bg-pink-600 hover:bg-pink-700 text-white font-black text-lg py-5 rounded-[1.5rem] shadow-2xl shadow-pink-900/40 transition-all active:scale-95 mt-4 uppercase tracking-widest italic"
-                >
-                  Confirm & Sync Record
+                <button type="submit" className="w-full bg-pink-600 hover:bg-pink-700 text-white font-black py-4 rounded-xl shadow-xl shadow-pink-900/20 uppercase tracking-widest italic transition-all active:scale-95">
+                  Confirm & Sync
                 </button>
               </form>
             </div>
