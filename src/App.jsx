@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend 
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area 
 } from 'recharts';
 import { 
-  LayoutDashboard, FolderPlus, Receipt, Menu, X, LogIn, 
-  MapPin, Plus, Trash2, Edit3, Save, ChevronRight, CheckCircle2, 
-  Clock, AlertCircle, PlayCircle 
+  LayoutDashboard, FolderPlus, Receipt, Menu, X, LogIn, Search,
+  MapPin, Plus, Trash2, Edit3, DollarSign, Users, Briefcase, ExternalLink
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { 
@@ -13,8 +12,7 @@ import {
   query, orderBy, updateDoc, doc, deleteDoc 
 } from 'firebase/firestore';
 
-// --- FIREBASE CONFIGURATION ---
-// Replace with your actual Firebase config from project settings
+// --- FIREBASE CONFIG ---
 const firebaseConfig = {
   apiKey: "AIzaSyAiSo4QbPqEOX-bTvbE7BjHtOY78_fTHpY",
   authDomain: "uystudiosprojectdatabase.firebaseapp.com",
@@ -28,135 +26,68 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// --- COMPONENTS ---
-
-const Login = ({ onLogin }) => {
-  const [code, setCode] = useState('');
-  const ACCESS_CODE = "UY2024"; // You can change this or manage via Firebase
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (code === ACCESS_CODE) onLogin();
-    else alert("Invalid Access Code");
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
-      <div className="bg-slate-900 p-8 rounded-2xl border border-slate-800 w-full max-w-md shadow-2xl">
-        <div className="flex justify-center mb-6">
-          <div className="bg-indigo-500/20 p-4 rounded-full">
-            <LogIn className="w-8 h-8 text-indigo-400" />
-          </div>
-        </div>
-        <h1 className="text-2xl font-bold text-white text-center mb-2">UY Studios</h1>
-        <p className="text-slate-400 text-center mb-8">Enter access code to manage projects</p>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <input
-            type="password"
-            placeholder="Access Code"
-            className="w-full bg-slate-800 border border-slate-700 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-          />
-          <button className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-lg transition-colors">
-            Access Dashboard
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-};
-
-const SidebarItem = ({ icon: Icon, label, active, onClick, collapsed }) => (
-  <button
-    onClick={onClick}
-    className={`w-full flex items-center p-3 rounded-lg transition-all mb-2 ${
-      active ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-    }`}
-  >
-    <Icon className="w-5 h-5 flex-shrink-0" />
-    {!collapsed && <span className="ml-3 font-medium">{label}</span>}
-  </button>
-);
-
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isSidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [projects, setProjects] = useState([]);
   const [expenses, setExpenses] = useState([]);
-  const [isProjectModalOpen, setProjectModalOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
 
-  // Sync with Firestore
   useEffect(() => {
     if (!isAuthenticated) return;
-
-    const qProjects = query(collection(db, 'projects'), orderBy('date', 'desc'));
-    const unsubProjects = onSnapshot(qProjects, (snapshot) => {
-      setProjects(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-
-    const qExpenses = query(collection(db, 'expenses'), orderBy('date', 'desc'));
-    const unsubExpenses = onSnapshot(qExpenses, (snapshot) => {
-      setExpenses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-
-    return () => { unsubProjects(); unsubExpenses(); };
+    const unsubP = onSnapshot(query(collection(db, 'projects'), orderBy('date', 'desc')), (s) => 
+      setProjects(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubE = onSnapshot(query(collection(db, 'expenses'), orderBy('date', 'desc')), (s) => 
+      setExpenses(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+    return () => { unsubP(); unsubE(); };
   }, [isAuthenticated]);
 
-  // Data Aggregation for Recharts
-  const getChartData = () => {
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    return months.map(month => {
-      const rev = projects
-        .filter(p => p.date?.includes(month) || new Date(p.date).toLocaleString('default', { month: 'short' }) === month)
-        .reduce((sum, p) => sum + (Number(p.paid) || 0), 0);
-      
-      const owed = projects
-        .filter(p => p.date?.includes(month) || new Date(p.date).toLocaleString('default', { month: 'short' }) === month)
-        .reduce((sum, p) => sum + (Number(p.budget) - Number(p.paid) || 0), 0);
-
-      const exp = expenses
-        .filter(e => e.date?.includes(month) || new Date(e.date).toLocaleString('default', { month: 'short' }) === month)
-        .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
-
-      return { name: month, revenue: rev, owed: owed, expenses: exp };
-    });
-  };
+  const filteredProjects = useMemo(() => {
+    return projects.filter(p => 
+      p.clientName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      p.eventType?.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [projects, searchTerm]);
 
   if (!isAuthenticated) return <Login onLogin={() => setIsAuthenticated(true)} />;
 
   return (
-    <div className="flex min-h-screen bg-slate-950 text-slate-200">
+    <div className="flex h-screen bg-[#050505] text-slate-300 font-sans">
       {/* Sidebar */}
-      <aside className={`${isSidebarCollapsed ? 'w-20' : 'w-64'} hidden md:flex flex-col bg-slate-900 border-r border-slate-800 transition-all duration-300 p-4`}>
-        <div className="flex items-center justify-between mb-8 px-2">
-          {!isSidebarCollapsed && <h2 className="text-xl font-bold text-white tracking-tight">UY STUDIOS</h2>}
-          <button onClick={() => setSidebarCollapsed(!isSidebarCollapsed)} className="p-1 hover:bg-slate-800 rounded">
-            <Menu className="w-5 h-5" />
-          </button>
+      <aside className={`${isSidebarCollapsed ? 'w-20' : 'w-72'} hidden md:flex flex-col bg-[#0a0a0a] border-r border-white/5 p-6 transition-all`}>
+        <div className="flex items-center gap-3 mb-12">
+          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center font-bold text-white">UY</div>
+          {!isSidebarCollapsed && <h1 className="text-xl font-bold tracking-tighter text-white">UY STUDIOS</h1>}
         </div>
-        
-        <SidebarItem icon={LayoutDashboard} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} collapsed={isSidebarCollapsed} />
-        <SidebarItem icon={FolderPlus} label="Projects" active={activeTab === 'projects'} onClick={() => setActiveTab('projects')} collapsed={isSidebarCollapsed} />
-        <SidebarItem icon={Receipt} label="Expenses" active={activeTab === 'expenses'} onClick={() => setActiveTab('expenses')} collapsed={isSidebarCollapsed} />
+        <nav className="space-y-2">
+          <NavItem icon={LayoutDashboard} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} collapsed={isSidebarCollapsed} />
+          <NavItem icon={FolderPlus} label="Projects" active={activeTab === 'projects'} onClick={() => setActiveTab('projects')} collapsed={isSidebarCollapsed} />
+          <NavItem icon={Receipt} label="Expenses" active={activeTab === 'expenses'} onClick={() => setActiveTab('expenses')} collapsed={isSidebarCollapsed} />
+        </nav>
       </aside>
 
-      {/* Main Content */}
+      {/* Main Container */}
       <main className="flex-1 flex flex-col overflow-hidden">
-        {/* Mobile Header */}
-        <header className="md:hidden flex items-center justify-between p-4 bg-slate-900 border-b border-slate-800">
-          <h2 className="font-bold text-white">UY STUDIOS</h2>
-          <div className="flex gap-4">
-            <LayoutDashboard onClick={() => setActiveTab('dashboard')} className={activeTab === 'dashboard' ? 'text-indigo-400' : ''} />
-            <FolderPlus onClick={() => setActiveTab('projects')} className={activeTab === 'projects' ? 'text-indigo-400' : ''} />
-            <Receipt onClick={() => setActiveTab('expenses')} className={activeTab === 'expenses' ? 'text-indigo-400' : ''} />
+        <header className="h-16 border-b border-white/5 flex items-center justify-between px-8 bg-[#050505]/80 backdrop-blur-md">
+          <div className="relative w-96">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+            <input 
+              type="text" 
+              placeholder="Search clients or events..." 
+              className="w-full bg-white/5 border border-white/10 rounded-full py-2 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
           </div>
+          <button onClick={() => setSidebarCollapsed(!isSidebarCollapsed)} className="p-2 hover:bg-white/5 rounded-lg">
+            <Menu className="w-5 h-5" />
+          </button>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-4 md:p-8">
-          {activeTab === 'dashboard' && <DashboardView data={getChartData()} projects={projects} />}
-          {activeTab === 'projects' && <ProjectsView projects={projects} />}
+        <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+          {activeTab === 'dashboard' && <DashboardView projects={projects} expenses={expenses} />}
+          {activeTab === 'projects' && <ProjectsView projects={filteredProjects} />}
           {activeTab === 'expenses' && <ExpensesView expenses={expenses} />}
         </div>
       </main>
@@ -164,37 +95,43 @@ export default function App() {
   );
 }
 
-// --- SUB-VIEWS ---
+// --- VIEWS ---
 
-function DashboardView({ data, projects }) {
-  const totalRevenue = projects.reduce((sum, p) => sum + (Number(p.paid) || 0), 0);
-  const totalOwed = projects.reduce((sum, p) => sum + (Number(p.budget) - Number(p.paid) || 0), 0);
+function DashboardView({ projects, expenses }) {
+  const totalRev = projects.reduce((s, p) => s + (Number(p.paid) || 0), 0);
+  const totalCost = projects.reduce((s, p) => {
+    const teamCost = p.teamMembers?.reduce((ts, t) => ts + (Number(t.cost) || 0), 0) || 0;
+    return s + teamCost;
+  }, 0) + expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <StatCard title="Total Revenue" value={`$${totalRevenue.toLocaleString()}`} color="text-emerald-400" />
-        <StatCard title="Total Owed" value={`$${totalOwed.toLocaleString()}`} color="text-amber-400" />
-        <StatCard title="Active Projects" value={projects.filter(p => p.status === 'In Progress').length} color="text-indigo-400" />
+    <div className="space-y-8 animate-in fade-in duration-700">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <MetricCard label="Revenue" value={`$${totalRev.toLocaleString()}`} trend="+12%" color="text-emerald-400" />
+        <MetricCard label="Operating Costs" value={`$${totalCost.toLocaleString()}`} trend="+5%" color="text-red-400" />
+        <MetricCard label="Net Profit" value={`$${(totalRev - totalCost).toLocaleString()}`} trend="+18%" color="text-indigo-400" />
+        <MetricCard label="Client Debt" value={`$${projects.reduce((s, p) => s + (Number(p.budget) - Number(p.paid)), 0).toLocaleString()}`} color="text-amber-400" />
       </div>
 
-      <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl">
-        <h3 className="text-lg font-semibold mb-6">Financial Trends (12 Months)</h3>
-        <div className="h-[350px] w-full">
+      <div className="bg-[#0a0a0a] p-8 rounded-3xl border border-white/5">
+        <h3 className="text-lg font-bold mb-8 flex items-center gap-2">
+          <div className="w-1 h-6 bg-indigo-500 rounded-full"></div> Financial Performance
+        </h3>
+        <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-              <XAxis dataKey="name" stroke="#94a3b8" />
-              <YAxis stroke="#94a3b8" />
-              <Tooltip 
-                contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px' }}
-                itemStyle={{ fontSize: '12px' }}
-              />
-              <Legend />
-              <Line type="monotone" dataKey="revenue" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} />
-              <Line type="monotone" dataKey="owed" stroke="#f59e0b" strokeWidth={2} strokeDasharray="5 5" />
-              <Line type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2} />
-            </LineChart>
+            <AreaChart data={[] /* Mock aggregate logic here */}>
+              <defs>
+                <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
+                  <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+              <XAxis dataKey="name" stroke="#475569" fontSize={12} tickLine={false} />
+              <YAxis stroke="#475569" fontSize={12} tickLine={false} axisLine={false} />
+              <Tooltip contentStyle={{backgroundColor: '#0a0a0a', borderColor: '#ffffff10', borderRadius: '12px'}} />
+              <Area type="monotone" dataKey="revenue" stroke="#6366f1" fillOpacity={1} fill="url(#colorRev)" strokeWidth={3} />
+            </AreaChart>
           </ResponsiveContainer>
         </div>
       </div>
@@ -203,181 +140,174 @@ function DashboardView({ data, projects }) {
 }
 
 function ProjectsView({ projects }) {
-  const [showAdd, setShowAdd] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  
-  const initialForm = {
-    clientName: '', eventType: '', duration: '', location: '', 
-    googleMapsLink: '', budget: '', paid: '', date: '', 
-    status: 'Not Started', teamMembers: []
-  };
-  const [form, setForm] = useState(initialForm);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (editingId) {
-      await updateDoc(doc(db, 'projects', editingId), form);
-      setEditingId(null);
-    } else {
-      await addDoc(collection(db, 'projects'), form);
-    }
-    setForm(initialForm);
-    setShowAdd(false);
-  };
-
-  const startEdit = (project) => {
-    setForm(project);
-    setEditingId(project.id);
-    setShowAdd(true);
-  };
+  const [showModal, setShowModal] = useState(false);
+  const [editingProject, setEditingProject] = useState(null);
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">Projects</h2>
-        <button 
-          onClick={() => { setForm(initialForm); setEditingId(null); setShowAdd(true); }}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-all"
-        >
-          <Plus className="w-4 h-4" /> New Project
+        <h2 className="text-2xl font-bold text-white tracking-tight">Project Portfolio</h2>
+        <button onClick={() => { setEditingProject(null); setShowModal(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-full font-bold flex items-center gap-2 shadow-lg shadow-indigo-500/20 transition-all">
+          <Plus className="w-4 h-4" /> New Commission
         </button>
       </div>
 
-      {showAdd && (
-        <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-2xl mb-8">
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <input placeholder="Client Name" className="form-input" value={form.clientName} onChange={e => setForm({...form, clientName: e.target.value})} required />
-            <input placeholder="Event Type (e.g. Wedding)" className="form-input" value={form.eventType} onChange={e => setForm({...form, eventType: e.target.value})} />
-            <input placeholder="Location" className="form-input" value={form.location} onChange={e => setForm({...form, location: e.target.value})} />
-            <input placeholder="Google Maps Link" className="form-input" value={form.googleMapsLink} onChange={e => setForm({...form, googleMapsLink: e.target.value})} />
-            <input type="date" className="form-input" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
-            <select className="form-input" value={form.status} onChange={e => setForm({...form, status: e.target.value})}>
-              <option>Not Started</option>
-              <option>In Progress</option>
-              <option>Completed</option>
-              <option>Cancelled</option>
-            </select>
-            <input type="number" placeholder="Budget ($)" className="form-input" value={form.budget} onChange={e => setForm({...form, budget: e.target.value})} />
-            <input type="number" placeholder="Amount Paid ($)" className="form-input" value={form.paid} onChange={e => setForm({...form, paid: e.target.value})} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {projects.map(p => (
+          <div key={p.id} className="group bg-[#0a0a0a] border border-white/5 p-6 rounded-3xl hover:border-indigo-500/30 transition-all relative overflow-hidden">
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <h3 className="text-lg font-bold text-white group-hover:text-indigo-400 transition-colors">{p.clientName}</h3>
+                <p className="text-sm text-slate-500">{p.eventType} • {p.date}</p>
+              </div>
+              <StatusBadge status={p.status} />
+            </div>
             
-            <div className="md:col-span-2 flex gap-3">
-              <button type="submit" className="flex-1 bg-indigo-600 py-3 rounded-lg font-bold">
-                {editingId ? 'Update Project' : 'Save Project'}
-              </button>
-              <button type="button" onClick={() => setShowAdd(false)} className="px-6 bg-slate-800 rounded-lg">Cancel</button>
+            <div className="flex items-center gap-4 mb-6 text-sm text-slate-400">
+              <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {p.location}</span>
+              <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {p.teamMembers?.length || 0} Members</span>
             </div>
-          </form>
-        </div>
-      )}
 
-      <div className="grid grid-cols-1 gap-4">
-        {projects.map(project => (
-          <div key={project.id} className="bg-slate-900 border border-slate-800 p-5 rounded-xl flex flex-col md:flex-row md:items-center justify-between hover:border-slate-700 transition-colors">
-            <div className="space-y-1">
-              <div className="flex items-center gap-3">
-                <h4 className="text-lg font-semibold text-white">{project.clientName}</h4>
-                <StatusBadge status={project.status} />
-              </div>
-              <p className="text-slate-400 text-sm">{project.eventType} • {project.date}</p>
-              <div className="flex items-center gap-1 text-xs text-slate-500">
-                <MapPin className="w-3 h-3" /> {project.location || 'No location set'}
-              </div>
-            </div>
-            <div className="mt-4 md:mt-0 flex items-center gap-8">
-              <div className="text-right">
-                <p className="text-xs text-slate-500 uppercase font-bold tracking-wider">Payments</p>
-                <p className="text-white font-mono">${project.paid} / ${project.budget}</p>
+            <div className="flex items-end justify-between pt-4 border-t border-white/5">
+              <div>
+                <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Payment Status</p>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xl font-mono text-white">${p.paid}</span>
+                  <span className="text-xs text-slate-500">/ ${p.budget}</span>
+                </div>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => startEdit(project)} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400"><Edit3 className="w-5 h-5" /></button>
-                <button onClick={() => deleteDoc(doc(db, 'projects', project.id))} className="p-2 hover:bg-red-900/30 rounded-lg text-red-400"><Trash2 className="w-5 h-5" /></button>
+                <button onClick={() => { setEditingProject(p); setShowModal(true); }} className="p-2 hover:bg-white/5 rounded-xl"><Edit3 className="w-4 h-4" /></button>
+                <button onClick={() => deleteDoc(doc(db, 'projects', p.id))} className="p-2 hover:bg-red-500/10 text-red-500 rounded-xl"><Trash2 className="w-4 h-4" /></button>
               </div>
             </div>
           </div>
         ))}
       </div>
+
+      {showModal && <ProjectModal project={editingProject} onClose={() => setShowModal(false)} />}
     </div>
   );
 }
 
-function ExpensesView({ expenses }) {
-  const [form, setForm] = useState({ type: 'Equipment', date: '', amount: '', reason: '' });
-  
-  const handleSubmit = async (e) => {
+function ProjectModal({ project, onClose }) {
+  const [form, setForm] = useState(project || {
+    clientName: '', eventType: '', date: '', location: '', budget: 0, paid: 0, status: 'Not Started',
+    teamMembers: []
+  });
+
+  const addTeamMember = () => {
+    setForm({...form, teamMembers: [...form.teamMembers, { name: '', role: '', cost: 0 }]});
+  };
+
+  const updateTeamMember = (index, field, value) => {
+    const updated = [...form.teamMembers];
+    updated[index][field] = value;
+    setForm({...form, teamMembers: updated});
+  };
+
+  const save = async (e) => {
     e.preventDefault();
-    await addDoc(collection(db, 'expenses'), form);
-    setForm({ type: 'Equipment', date: '', amount: '', reason: '' });
+    project ? await updateDoc(doc(db, 'projects', project.id), form) : await addDoc(collection(db, 'projects'), form);
+    onClose();
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
-      <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl">
-        <h3 className="text-lg font-semibold mb-4">Log New Expense</h3>
-        <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <select className="form-input" value={form.type} onChange={e => setForm({...form, type: e.target.value})}>
-            <option>Equipment</option>
-            <option>Rentals</option>
-            <option>Travel</option>
-            <option>Marketing</option>
-            <option>Payroll</option>
-            <option>Other</option>
-          </select>
-          <input type="date" className="form-input" value={form.date} onChange={e => setForm({...form, date: e.target.value})} required />
-          <input type="number" placeholder="Amount" className="form-input" value={form.amount} onChange={e => setForm({...form, amount: e.target.value})} required />
-          <button className="bg-indigo-600 rounded-lg hover:bg-indigo-700 font-bold">Add</button>
-          <input placeholder="Reason / Notes" className="form-input md:col-span-4" value={form.reason} onChange={e => setForm({...form, reason: e.target.value})} />
-        </form>
-      </div>
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+      <div className="bg-[#0f0f0f] border border-white/10 w-full max-w-2xl rounded-3xl p-8 max-h-[90vh] overflow-y-auto custom-scrollbar">
+        <h3 className="text-xl font-bold text-white mb-8">Project Details</h3>
+        <form onSubmit={save} className="space-y-6">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Client Name</label>
+              <input value={form.clientName} onChange={e => setForm({...form, clientName: e.target.value})} className="modal-input" required />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Event Type</label>
+              <input value={form.eventType} onChange={e => setForm({...form, eventType: e.target.value})} className="modal-input" />
+            </div>
+          </div>
 
-      <div className="overflow-x-auto rounded-xl border border-slate-800">
-        <table className="w-full text-left bg-slate-900">
-          <thead>
-            <tr className="bg-slate-800/50 text-slate-400 text-sm uppercase">
-              <th className="p-4">Date</th>
-              <th className="p-4">Category</th>
-              <th className="p-4">Reason</th>
-              <th className="p-4">Amount</th>
-              <th className="p-4"></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-800">
-            {expenses.map(exp => (
-              <tr key={exp.id} className="hover:bg-slate-800/30 transition-colors">
-                <td className="p-4 text-slate-300">{exp.date}</td>
-                <td className="p-4 font-medium">{exp.type}</td>
-                <td className="p-4 text-slate-400 text-sm">{exp.reason}</td>
-                <td className="p-4 text-red-400 font-mono">-${Number(exp.amount).toFixed(2)}</td>
-                <td className="p-4 text-right">
-                  <button onClick={() => deleteDoc(doc(db, 'expenses', exp.id))} className="text-slate-600 hover:text-red-400"><Trash2 className="w-4 h-4" /></button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          <div className="grid grid-cols-3 gap-4">
+            <input type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})} className="modal-input" />
+            <input placeholder="Budget" type="number" value={form.budget} onChange={e => setForm({...form, budget: e.target.value})} className="modal-input" />
+            <input placeholder="Paid" type="number" value={form.paid} onChange={e => setForm({...form, paid: e.target.value})} className="modal-input" />
+          </div>
+
+          <div className="pt-6 border-t border-white/5">
+            <div className="flex justify-between items-center mb-4">
+              <h4 className="text-sm font-bold text-white flex items-center gap-2"><Users className="w-4 h-4 text-indigo-400" /> Team Production</h4>
+              <button type="button" onClick={addTeamMember} className="text-xs text-indigo-400 hover:text-indigo-300 font-bold">+ Add Member</button>
+            </div>
+            <div className="space-y-3">
+              {form.teamMembers.map((m, i) => (
+                <div key={i} className="flex gap-2 bg-white/5 p-3 rounded-2xl items-center">
+                  <input placeholder="Name" value={m.name} onChange={e => updateTeamMember(i, 'name', e.target.value)} className="bg-transparent border-none text-sm w-full focus:ring-0" />
+                  <input placeholder="Role" value={m.role} onChange={e => updateTeamMember(i, 'role', e.target.value)} className="bg-transparent border-none text-sm w-full focus:ring-0" />
+                  <div className="flex items-center bg-black/40 rounded-lg px-2">
+                    <span className="text-slate-500 text-xs">$</span>
+                    <input type="number" placeholder="Cost" value={m.cost} onChange={e => updateTeamMember(i, 'cost', e.target.value)} className="bg-transparent border-none text-sm w-20 focus:ring-0" />
+                  </div>
+                  <button onClick={() => {
+                    const filtered = form.teamMembers.filter((_, idx) => idx !== i);
+                    setForm({...form, teamMembers: filtered});
+                  }} className="text-red-500 p-1"><X className="w-4 h-4" /></button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-6">
+            <button type="submit" className="flex-1 bg-indigo-600 py-3 rounded-2xl font-bold text-white shadow-lg shadow-indigo-500/20">Establish Project</button>
+            <button type="button" onClick={onClose} className="px-8 py-3 bg-white/5 rounded-2xl font-bold">Discard</button>
+          </div>
+        </form>
       </div>
     </div>
   );
 }
 
-// --- UTILS & SHARED UI ---
+// --- SHARED UI ---
+const NavItem = ({ icon: Icon, label, active, onClick, collapsed }) => (
+  <button onClick={onClick} className={`w-full flex items-center p-4 rounded-2xl transition-all ${active ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-500/20' : 'text-slate-500 hover:bg-white/5 hover:text-slate-200'}`}>
+    <Icon className="w-5 h-5 flex-shrink-0" />
+    {!collapsed && <span className="ml-4 font-bold text-sm tracking-tight">{label}</span>}
+  </button>
+);
 
-const StatCard = ({ title, value, color }) => (
-  <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl">
-    <p className="text-slate-400 text-sm font-medium mb-1">{title}</p>
-    <p className={`text-3xl font-bold ${color}`}>{value}</p>
+const MetricCard = ({ label, value, trend, color }) => (
+  <div className="bg-[#0a0a0a] p-6 rounded-3xl border border-white/5">
+    <p className="text-[10px] uppercase tracking-[0.2em] font-black text-slate-500 mb-2">{label}</p>
+    <div className="flex items-baseline gap-3">
+      <h4 className={`text-2xl font-mono font-bold ${color}`}>{value}</h4>
+      {trend && <span className="text-[10px] text-emerald-500 font-bold">{trend}</span>}
+    </div>
   </div>
 );
 
 const StatusBadge = ({ status }) => {
-  const styles = {
-    'Completed': 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-    'In Progress': 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20',
-    'Not Started': 'bg-slate-500/10 text-slate-400 border-slate-500/20',
-    'Cancelled': 'bg-red-500/10 text-red-400 border-red-500/20'
+  const colors = {
+    'Completed': 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20',
+    'In Progress': 'text-indigo-400 bg-indigo-400/10 border-indigo-400/20',
+    'Not Started': 'text-slate-400 bg-slate-400/10 border-slate-400/20'
   };
+  return <span className={`text-[10px] font-black uppercase px-3 py-1 rounded-full border ${colors[status] || colors['Not Started']}`}>{status}</span>;
+}
+
+const Login = ({ onLogin }) => {
+  const [val, setVal] = useState('');
   return (
-    <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded border ${styles[status]}`}>
-      {status}
-    </span>
+    <div className="h-screen bg-black flex items-center justify-center">
+      <div className="w-full max-w-sm p-12 bg-[#0a0a0a] rounded-[40px] border border-white/5 text-center">
+        <h1 className="text-3xl font-black text-white mb-2 tracking-tighter">UY STUDIOS</h1>
+        <p className="text-slate-500 text-sm mb-10 italic">Access the Vault</p>
+        <input 
+          type="password" 
+          onChange={e => setVal(e.target.value)}
+          className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 mb-4 text-center tracking-[1em] focus:outline-none focus:ring-2 focus:ring-indigo-500" 
+        />
+        <button onClick={() => val === 'UY2024' && onLogin()} className="w-full bg-indigo-600 py-4 rounded-2xl font-bold text-white shadow-lg shadow-indigo-500/40 hover:scale-[1.02] transition-transform">Initialize</button>
+      </div>
+    </div>
   );
-};
+}
