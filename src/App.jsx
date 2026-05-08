@@ -10,7 +10,7 @@ import {
 import { initializeApp } from 'firebase/app';
 import { 
   getFirestore, collection, addDoc, onSnapshot, 
-  query, orderBy, updateDoc, doc, deleteDoc 
+  query, orderBy, updateDoc, doc, deleteDoc, getDocs 
 } from 'firebase/firestore';
 
 // --- CORE INFRASTRUCTURE ---
@@ -27,6 +27,32 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
+// --- PRE-LOADED BOOKINGS LOG DATA  ---
+const SEED_DATA = [
+  { clientName: "Marilyn Bautista", eventType: "Engagement", date: "2024-06-08", location: "Spadina", budget: 200, paid: 200, status: "Completed" },
+  { clientName: "Lorela Viloria", eventType: "Graduation", date: "2024-06-23", location: "Spadina", budget: 100, paid: 100, status: "Completed" },
+  { clientName: "Kat Poncelet", eventType: "Graduation", date: "2024-06-26", location: "Home", budget: 300, paid: 125, status: "In Progress" },
+  { clientName: "Nene Geresola", eventType: "Graduation", date: "2024-06-27", location: "", budget: 0, paid: 0, status: "Completed" },
+  { clientName: "Jhen Gonzaga", eventType: "Wedding", date: "2024-07-13", location: "The Cardinals", budget: 700, paid: 700, status: "Completed" },
+  { clientName: "Nap Navarro", eventType: "Birthday", date: "2024-10-12", location: "Home", budget: 500, paid: 500, status: "Completed" },
+  { clientName: "Jane Pasion", eventType: "Dedication", date: "2024-12-22", location: "First Mennonite Church", budget: 200, paid: 200, status: "Completed" },
+  { clientName: "Annaliza Pacion", eventType: "Dedication", date: "2025-01-04", location: "SNLCF", budget: 290, paid: 290, status: "Completed" },
+  { clientName: "Jerrelei Sabri", eventType: "Baptism", date: "2025-04-13", location: "Sacred Heart Church", budget: 700, paid: 700, status: "Completed", filesLink: "https://www.canva.com/design/DAGjo16jRf0/QitIxuHu1VSyLO4uiSds7g/view" },
+  { clientName: "Marilyn Bautista", eventType: "Wedding", date: "2025-05-10", location: "Hilton Garden", budget: 2200, paid: 2200, status: "Completed" },
+  { clientName: "Summer Norman", eventType: "Wedding", date: "2025-05-17", location: "Family Farm", budget: 1300, paid: 1350, status: "Completed" },
+  { clientName: "Mavelyn Bautista", eventType: "Graduation", date: "2025-06-16", location: "Saskpoly", budget: 130, paid: 130, status: "Completed" },
+  { clientName: "Shania Locano", eventType: "Graduation", date: "2025-06-16", location: "Saskpoly", budget: 130, paid: 140, status: "Completed" },
+  { clientName: "James", eventType: "Graduation", date: "2025-06-16", location: "Saskpoly", budget: 80, paid: 80, status: "Completed" },
+  { clientName: "Christine Corpus", eventType: "Wedding", date: "2025-07-12", location: "Remai", budget: 3800, paid: 3800, status: "Completed" },
+  { clientName: "Edna C", eventType: "Wedding", date: "2025-08-08", location: "RUH", budget: 350, paid: 350, status: "Completed" },
+  { clientName: "Caroline Brookfield", eventType: "Keynote", date: "2025-09-17", location: "Prairieland Park", budget: 550, paid: 450, status: "Completed" },
+  { clientName: "Gracelyn Whitefish", eventType: "Wedding", date: "2025-10-25", location: "Wanuskewin", budget: 1200, paid: 0, status: "In Progress" },
+  { clientName: "Shara Miranda", eventType: "Wedding", date: "2025-11-18", location: "Hepburn, SK", budget: 700, paid: 500, status: "Completed", mapsLink: "https://goo.gl/maps/hnX3y55MTMVXPnQA7" },
+  { clientName: "IG wealth", eventType: "Corporate Event", date: "2026-05-05", location: "Saskatoon Club", budget: 500, paid: 500, status: "In Progress" },
+  { clientName: "Brandon Lee", eventType: "Wedding", date: "2026-08-29", location: "Shekinah Retreat Center", budget: 4000, paid: 0, status: "In Progress" },
+  { clientName: "IG wealth", eventType: "Headshots", date: "2026-03-30", location: "Saskatoon", budget: 400, paid: 400, status: "Completed" }
+];
+
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -35,6 +61,20 @@ export default function App() {
   const [projects, setProjects] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
+
+  // SEED DATA FUNCTION: Automatically populates Firestore if empty
+  const seedDatabase = async () => {
+    const querySnapshot = await getDocs(collection(db, "projects"));
+    if (querySnapshot.empty) {
+      SEED_DATA.forEach(async (project) => {
+        await addDoc(collection(db, "projects"), { ...project, teamMembers: [] });
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (isAuthenticated) seedDatabase();
+  }, [isAuthenticated]);
 
   useEffect(() => {
     window.addEventListener('online', () => setIsOnline(true));
@@ -66,7 +106,7 @@ export default function App() {
   return (
     <div className="flex flex-col md:flex-row h-screen bg-[#010102] text-slate-400 overflow-hidden font-extralight tracking-tight selection:bg-blue-500/30">
       
-      {/* DESKTOP SIDEBAR: NEON GLOW CHASSIS */}
+      {/* SIDEBAR NAVIGATION */}
       <aside className={`hidden md:flex relative flex-col bg-[#050506] border-r border-white/5 transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)] ${isSidebarCollapsed ? 'w-20' : 'w-72'} shadow-[10px_0_40px_rgba(0,0,0,0.9)]`}>
         <div className="p-8 flex items-center justify-between">
           {!isSidebarCollapsed && (
@@ -74,7 +114,7 @@ export default function App() {
               <div className="w-10 h-10 bg-black border border-white/10 rounded-full flex items-center justify-center shadow-[0_0_20px_rgba(255,255,255,0.05)]">
                 <span className="text-white font-thin text-[10px] tracking-[0.4em]">UY</span>
               </div>
-              <h1 className="text-xs font-thin tracking-[0.6em] text-white">STUDIOS</h1>
+              <h1 className="text-xs font-thin tracking-[0.6em] text-white uppercase italic">Studios</h1>
             </div>
           )}
           <button onClick={() => setSidebarCollapsed(!isSidebarCollapsed)} className="p-2 hover:text-white transition-colors active:scale-90">
@@ -83,21 +123,20 @@ export default function App() {
         </div>
 
         <nav className="flex-1 px-6 py-10 space-y-6">
-          {/* FIXED: Added missing closing parentheses in onClick handlers below */}
-          <NavItem icon={Activity} label="Overview" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} color="blue" collapsed={isSidebarCollapsed} />
-          <NavItem icon={Terminal} label="Productions" active={activeTab === 'projects'} onClick={() => setActiveTab('projects')} color="purple" collapsed={isSidebarCollapsed} />
-          <NavItem icon={Receipt} label="Financials" active={activeTab === 'expenses'} onClick={() => setActiveTab('expenses')} color="emerald" collapsed={isSidebarCollapsed} />
+          <NavItem icon={Activity} label="Performance" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} color="blue" collapsed={isSidebarCollapsed} />
+          <NavItem icon={Terminal} label="Portfolio" active={activeTab === 'projects'} onClick={() => setActiveTab('projects')} color="purple" collapsed={isSidebarCollapsed} />
+          <NavItem icon={Receipt} label="Ledger" active={activeTab === 'expenses'} onClick={() => setActiveTab('expenses')} color="emerald" collapsed={isSidebarCollapsed} />
         </nav>
       </aside>
 
-      {/* MOBILE BOTTOM NAV */}
+      {/* MOBILE NAVIGATION BAR */}
       <nav className="md:hidden fixed bottom-6 left-6 right-6 h-20 bg-black/60 backdrop-blur-2xl border border-white/10 rounded-[2.5rem] flex items-center justify-around px-4 z-[100] shadow-[0_20px_50px_rgba(0,0,0,0.5)]">
         <MobileNavItem icon={Activity} active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} color="blue" />
         <MobileNavItem icon={Terminal} active={activeTab === 'projects'} onClick={() => setActiveTab('projects')} color="purple" />
         <MobileNavItem icon={Receipt} active={activeTab === 'expenses'} onClick={() => setActiveTab('expenses')} color="emerald" />
       </nav>
 
-      {/* PRIMARY DATA CORE */}
+      {/* PRIMARY APPLICATION CORE */}
       <main className="flex-1 flex flex-col min-w-0 h-full">
         <header className="h-20 md:h-24 flex items-center justify-between px-6 md:px-10 border-b border-white/5 bg-[#010102]/90 backdrop-blur-3xl z-50">
           <div className="flex-1 flex items-center">
@@ -105,7 +144,7 @@ export default function App() {
               <Search className="absolute left-0 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-700 group-focus-within:text-white transition-all" />
               <input 
                 type="text" 
-                placeholder="SEARCH ARCHIVES..." 
+                placeholder="SEARCH PRODUCTION ARCHIVES..." 
                 className="w-full bg-transparent border-none py-4 pl-10 text-[9px] md:text-[10px] tracking-[0.4em] focus:outline-none text-white placeholder:text-slate-800"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -115,18 +154,18 @@ export default function App() {
           
           <div className="flex items-center gap-4 md:gap-8">
             <div className="text-right group hidden sm:block">
-              <p className="text-[8px] font-black tracking-[0.3em] text-slate-700 uppercase group-hover:text-slate-500 transition-colors">System Status</p>
+              <p className="text-[8px] font-black tracking-[0.3em] text-slate-700 uppercase group-hover:text-slate-500 transition-colors">Connection Status</p>
               <p className={`text-[9px] tracking-[0.2em] font-bold ${isOnline ? 'text-emerald-500 drop-shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'text-red-500'}`}>
                 {isOnline ? 'ENCRYPTED' : 'OFFLINE'}
               </p>
             </div>
-            <div className="md:hidden w-8 h-8 bg-white/5 rounded-full border border-white/10 flex items-center justify-center">
+            <div className="md:hidden w-8 h-8 bg-white/5 rounded-full border border-white/10 flex items-center justify-center shadow-[0_0_15px_rgba(255,255,255,0.05)]">
               <span className="text-[8px] text-white">UY</span>
             </div>
           </div>
         </header>
 
-        {/* CONTENT AREA */}
+        {/* MAIN DATA INTERFACE */}
         <div className="flex-1 overflow-y-auto pb-32 md:pb-12 p-6 md:p-12 custom-scrollbar bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-[#0a0a0f] via-[#010102] to-[#010102]">
           <div className="max-w-[1600px] mx-auto">
             {activeTab === 'dashboard' && <DashboardView projects={projects} expenses={expenses} />}
@@ -148,16 +187,16 @@ function DashboardView({ projects, expenses }) {
   return (
     <div className="space-y-10 md:space-y-16 animate-in fade-in slide-in-from-bottom-4 duration-1000">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-10">
-        <MetricCard label="REVENUE" value={`$${totalRev.toLocaleString()}`} accent="blue" />
-        <MetricCard label="COSTS" value={`$${totalBurn.toLocaleString()}`} accent="red" />
-        <MetricCard label="MARGIN" value="84.2%" accent="emerald" />
-        <MetricCard label="ACTIVE" value={projects.filter(p => p.status === 'In Progress').length} accent="purple" />
+        <MetricCard label="GROSS REVENUE" value={`$${totalRev.toLocaleString()}`} accent="blue" />
+        <MetricCard label="OPERATING COSTS" value={`$${totalBurn.toLocaleString()}`} accent="red" />
+        <MetricCard label="NET MARGIN" value="84.2%" accent="emerald" />
+        <MetricCard label="ACTIVE TASKS" value={projects.filter(p => p.status === 'In Progress').length} accent="purple" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 md:gap-12">
-        <div className="lg:col-span-2 bg-[#050506] border border-white/5 rounded-[2.5rem] md:rounded-[3.5rem] p-6 md:p-12 shadow-[0_40px_80px_-15px_rgba(0,0,0,0.6)] relative overflow-hidden group transition-all">
+        <div className="lg:col-span-2 bg-[#050506] border border-white/5 rounded-[2.5rem] md:rounded-[3.5rem] p-6 md:p-12 shadow-[0_40px_80px_-15px_rgba(0,0,0,0.6)] relative overflow-hidden group">
           <div className="absolute inset-0 bg-gradient-to-br from-blue-600/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
-          <h3 className="text-[10px] font-thin tracking-[0.5em] text-white/40 mb-8 md:mb-12 uppercase">Financial Projections</h3>
+          <h3 className="text-[10px] font-thin tracking-[0.5em] text-white/40 mb-8 md:mb-12 uppercase italic">Growth Projection Analytics</h3>
           <div className="h-64 md:h-80">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={projects.slice(0, 15).reverse()}>
@@ -176,11 +215,11 @@ function DashboardView({ projects, expenses }) {
         
         <div className="bg-white text-black rounded-[2.5rem] md:rounded-[3.5rem] p-10 md:p-12 flex flex-col justify-between shadow-[0_0_60px_rgba(255,255,255,0.08)] transform active:scale-95 md:hover:scale-[1.02] transition-all duration-500">
           <div>
-            <h4 className="text-[9px] font-black uppercase tracking-[0.4em] opacity-30 mb-4">NET LIQUIDITY</h4>
+            <h4 className="text-[9px] font-black uppercase tracking-[0.4em] opacity-30 mb-4">TOTAL NET PROFIT</h4>
             <p className="text-5xl md:text-6xl font-extralight tracking-tighter italic">${(totalRev - totalBurn).toLocaleString()}</p>
           </div>
           <div className="space-y-6 pt-12 border-t border-black/5 hidden md:block">
-            <p className="text-[9px] leading-relaxed font-bold uppercase tracking-[0.2em] opacity-30">UY Studios Infrastructure v1</p>
+            <p className="text-[9px] leading-relaxed font-bold uppercase tracking-[0.2em] opacity-30 italic">UY Studios Infrastructure v3.5</p>
           </div>
         </div>
       </div>
@@ -196,19 +235,19 @@ function ExpensesView({ expenses }) {
     <div className="space-y-8 md:space-y-12 animate-in fade-in slide-in-from-right-8 duration-700">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
-          <h2 className="text-3xl md:text-4xl font-thin text-white tracking-[0.3em] uppercase italic">Ledger</h2>
-          <p className="text-[9px] tracking-[0.5em] text-slate-700 mt-2 font-bold uppercase">Expenditure Log</p>
+          <h2 className="text-3xl md:text-4xl font-thin text-white tracking-[0.3em] uppercase italic">Fiscal Ledger</h2>
+          <p className="text-[9px] tracking-[0.5em] text-slate-700 mt-2 font-bold uppercase italic">Expenditure Log</p>
         </div>
-        <button onClick={() => { setEditData(null); setShowModal(true); }} className="w-full md:w-auto px-10 py-5 bg-white text-black text-[9px] font-black tracking-[0.5em] rounded-full hover:bg-emerald-500 hover:text-white transition-all shadow-xl active:scale-95">ADD ENTRY +</button>
+        <button onClick={() => { setEditData(null); setShowModal(true); }} className="w-full md:w-auto px-10 py-5 bg-white text-black text-[9px] font-black tracking-[0.5em] rounded-full hover:bg-emerald-500 hover:text-white transition-all shadow-xl active:scale-95 italic">LOG DEBIT +</button>
       </div>
 
       <div className="bg-[#050506] border border-white/5 rounded-[2rem] md:rounded-[3rem] overflow-hidden shadow-2xl overflow-x-auto">
         <table className="w-full text-left text-sm font-extralight min-w-[600px]">
           <thead>
             <tr className="border-b border-white/5 text-[9px] tracking-[0.4em] text-slate-600 uppercase bg-white/[0.01]">
-              <th className="px-8 py-8">Date</th>
+              <th className="px-8 py-8">Timestamp</th>
               <th className="px-8 py-8">Description</th>
-              <th className="px-8 py-8 text-right">Amount</th>
+              <th className="px-8 py-8 text-right">Allocation</th>
               <th className="px-8 py-8"></th>
             </tr>
           </thead>
@@ -216,12 +255,12 @@ function ExpensesView({ expenses }) {
             {expenses.map(e => (
               <tr key={e.id} className="hover:bg-white/[0.02] transition-all group">
                 <td className="px-8 py-6 text-slate-600 font-mono text-[10px]">{e.date}</td>
-                <td className="px-8 py-6 text-white tracking-widest uppercase text-xs font-light">{e.description}</td>
+                <td className="px-8 py-6 text-white tracking-widest uppercase text-xs font-light italic">{e.description}</td>
                 <td className="px-8 py-6 text-right font-mono text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.2)]">-${Number(e.amount).toLocaleString()}</td>
                 <td className="px-8 py-6 text-right">
                   <div className="flex gap-4 justify-end">
                     <button onClick={() => { setEditData(e); setShowModal(true); }} className="p-3 bg-white/5 rounded-full hover:bg-white hover:text-black transition-all active:scale-75"><Edit3 className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => deleteDoc(doc(db, 'expenses', e.id))} className="p-3 bg-red-500/10 rounded-full hover:bg-red-500 hover:text-white transition-all active:scale-75"><Trash2 className="w-3.5 h-3.5 text-red-500" /></button>
+                    <button onClick={() => deleteDoc(doc(db, 'expenses', e.id))} className="p-3 bg-red-500/10 rounded-full hover:bg-red-500 hover:text-white transition-all active:scale-75"><Trash2 className="w-3.5 h-3.5 text-red-500 hover:text-white" /></button>
                   </div>
                 </td>
               </tr>
@@ -243,10 +282,10 @@ function ProjectsView({ projects }) {
     <div className="space-y-8 md:space-y-12 animate-in fade-in duration-700">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
-          <h2 className="text-4xl md:text-5xl font-thin text-white tracking-tighter uppercase italic">Portfolio</h2>
-          <p className="text-[9px] tracking-[0.6em] text-slate-700 mt-2 font-bold uppercase">Production Units: {projects.length}</p>
+          <h2 className="text-4xl md:text-5xl font-thin text-white tracking-tighter uppercase italic">Portfolio Matrix</h2>
+          <p className="text-[9px] tracking-[0.6em] text-slate-700 mt-2 font-bold uppercase italic">Production Assets: {projects.length}</p>
         </div>
-        <button onClick={() => { setEditData(null); setShowModal(true); }} className="w-full md:w-auto px-10 py-5 bg-white text-black text-[9px] font-black tracking-[0.5em] rounded-full hover:shadow-[0_0_40px_rgba(255,255,255,0.2)] transition-all active:scale-95">NEW SHOOT +</button>
+        <button onClick={() => { setEditData(null); setShowModal(true); }} className="w-full md:w-auto px-10 py-5 bg-white text-black text-[9px] font-black tracking-[0.5em] rounded-full hover:shadow-[0_0_40px_rgba(255,255,255,0.2)] transition-all active:scale-95 italic font-black uppercase">Initialize Production +</button>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 md:gap-12">
@@ -255,30 +294,30 @@ function ProjectsView({ projects }) {
             <div className="flex justify-between items-start mb-10 md:mb-12">
               <div className="space-y-4">
                 <StatusBadge status={p.status} />
-                <h3 className="text-2xl md:text-3xl font-extralight text-white tracking-tighter uppercase group-hover:text-blue-400 transition-colors duration-500">{p.clientName}</h3>
-                <p className="text-[8px] font-bold tracking-[0.4em] text-slate-700 uppercase">{p.eventType}</p>
+                <h3 className="text-2xl md:text-3xl font-extralight text-white tracking-tighter uppercase group-hover:text-blue-400 transition-colors duration-500 italic">{p.clientName}</h3>
+                <p className="text-[8px] font-bold tracking-[0.4em] text-slate-700 uppercase italic font-black">{p.eventType}</p>
               </div>
               <div className="flex gap-3 md:gap-4 md:opacity-0 group-hover:opacity-100 transition-all duration-500">
-                <button onClick={() => { setEditData(p); setShowModal(true); }} className="p-3 md:p-4 bg-white/5 rounded-full hover:bg-white text-black transition-all active:scale-75"><Edit3 className="w-4 h-4" /></button>
-                <button onClick={() => deleteDoc(doc(db, 'projects', p.id))} className="p-3 md:p-4 bg-red-500/10 rounded-full hover:bg-red-500 text-white transition-all active:scale-75"><Trash2 className="w-4 h-4" /></button>
+                <button onClick={() => { setEditData(p); setShowModal(true); }} className="p-3 md:p-4 bg-white/5 rounded-full hover:bg-white text-black transition-all active:scale-75 shadow-lg shadow-white/5"><Edit3 className="w-4 h-4" /></button>
+                <button onClick={() => deleteDoc(doc(db, 'projects', p.id))} className="p-3 md:p-4 bg-red-500/10 rounded-full hover:bg-red-500 text-white transition-all active:scale-75 shadow-lg shadow-red-500/5"><Trash2 className="w-4 h-4" /></button>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 md:gap-4 mb-10 md:mb-12 font-bold">
-               <a href={p.mapsLink} target="_blank" rel="noreferrer" className="p-4 md:p-6 bg-white/[0.01] border border-white/5 rounded-2xl text-[8px] tracking-[0.2em] text-slate-600 uppercase flex items-center gap-3 md:gap-4 hover:border-blue-500/50 hover:text-blue-400 transition-all overflow-hidden">
-                 <MapPin className="w-3.5 h-3.5 flex-shrink-0" /> <span className="truncate">{p.location || 'Pending'}</span>
+            <div className="grid grid-cols-2 gap-3 md:gap-4 mb-10 md:mb-12 font-bold uppercase italic font-black">
+               <a href={p.mapsLink} target="_blank" rel="noreferrer" className="p-4 md:p-6 bg-white/[0.01] border border-white/5 rounded-2xl text-[8px] tracking-[0.2em] text-slate-600 uppercase flex items-center gap-3 md:gap-4 hover:border-blue-500/50 hover:text-blue-400 transition-all overflow-hidden shadow-inner">
+                 <MapPin className="w-3.5 h-3.5 flex-shrink-0 drop-shadow-[0_0_5px_rgba(59,130,246,0.5)]" /> <span className="truncate">{p.location || 'Pending Coordinates'}</span>
                </a>
-               <a href={p.filesLink} target="_blank" rel="noreferrer" className="p-4 md:p-6 bg-white/[0.01] border border-white/5 rounded-2xl text-[8px] tracking-[0.2em] text-slate-600 uppercase flex items-center gap-3 md:gap-4 hover:border-emerald-500/50 hover:text-emerald-400 transition-all">
-                 <Globe className="w-3.5 h-3.5 flex-shrink-0" /> Cloud
+               <a href={p.filesLink} target="_blank" rel="noreferrer" className="p-4 md:p-6 bg-white/[0.01] border border-white/5 rounded-2xl text-[8px] tracking-[0.2em] text-slate-600 uppercase flex items-center gap-3 md:gap-4 hover:border-emerald-500/50 hover:text-emerald-400 transition-all shadow-inner">
+                 <Globe className="w-3.5 h-3.5 flex-shrink-0 drop-shadow-[0_0_5px_rgba(16,185,129,0.5)]" /> Secure Assets
                </a>
             </div>
 
-            <div className="flex items-center justify-between pt-8 md:pt-10 border-t border-white/5">
+            <div className="flex items-center justify-between pt-8 md:pt-10 border-t border-white/5 italic">
               <div className="text-right">
-                <p className="text-[8px] font-black text-slate-800 tracking-[0.4em] uppercase mb-1">Fund Allocation</p>
+                <p className="text-[8px] font-black text-slate-800 tracking-[0.4em] uppercase mb-1 font-black">Liquidity Stream</p>
                 <p className="text-xl md:text-2xl font-extralight text-white font-mono tracking-tighter">${p.paid} <span className="opacity-20 text-[10px] tracking-normal">/ ${p.budget}</span></p>
               </div>
-              <div className="h-1 w-24 md:w-32 bg-white/[0.03] rounded-full overflow-hidden">
+              <div className="h-1 w-24 md:w-32 bg-white/[0.03] rounded-full overflow-hidden shadow-inner">
                 <div className="h-full bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.6)] transition-all duration-1000" style={{width: `${(p.paid/p.budget)*100}%`}} />
               </div>
             </div>
@@ -294,68 +333,68 @@ function ProjectsView({ projects }) {
 
 const NavItem = ({ icon: Icon, label, active, onClick, collapsed, color }) => {
   const neon = {
-    blue: 'hover:text-blue-400',
-    purple: 'hover:text-purple-400',
-    emerald: 'hover:text-emerald-400'
+    blue: 'hover:text-blue-400 hover:drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]',
+    purple: 'hover:text-purple-400 hover:drop-shadow-[0_0_8px_rgba(168,85,247,0.5)]',
+    emerald: 'hover:text-emerald-400 hover:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]'
   };
   
   return (
     <button 
       onClick={onClick} 
-      className={`w-full flex items-center px-6 py-5 rounded-[2rem] border transition-all duration-500 active:scale-95 ${active ? 'bg-white text-black border-white shadow-[0_15px_40px_rgba(255,255,255,0.1)]' : `bg-transparent border-transparent text-slate-600 ${neon[color]}`}`}
+      className={`w-full flex items-center px-6 py-5 rounded-[2rem] border transition-all duration-500 active:scale-95 ${active ? 'bg-white text-black border-white shadow-[0_15px_40px_rgba(255,255,255,0.15)]' : `bg-transparent border-transparent text-slate-600 ${neon[color]}`}`}
     >
-      <Icon className="w-4 h-4 flex-shrink-0" />
-      {!collapsed && <span className="ml-6 text-[10px] font-black uppercase tracking-[0.5em] pt-0.5">{label}</span>}
+      <Icon className={`w-4 h-4 flex-shrink-0 ${active ? 'drop-shadow-[0_0_5px_rgba(0,0,0,0.5)]' : ''}`} />
+      {!collapsed && <span className="ml-6 text-[10px] font-black uppercase tracking-[0.5em] pt-0.5 font-black uppercase italic">{label}</span>}
     </button>
   );
 };
 
 const MobileNavItem = ({ icon: Icon, active, onClick, color }) => {
   const colors = {
-    blue: 'text-blue-400 shadow-[0_0_20px_rgba(59,130,246,0.2)]',
-    purple: 'text-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.2)]',
-    emerald: 'text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.2)]'
+    blue: 'text-blue-400 shadow-[0_0_20px_rgba(59,130,246,0.3)]',
+    purple: 'text-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.3)]',
+    emerald: 'text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.3)]'
   };
   return (
     <button onClick={onClick} className={`p-4 rounded-full transition-all duration-500 active:scale-75 ${active ? `bg-white/10 ${colors[color]}` : 'text-slate-700'}`}>
-      <Icon className="w-6 h-6" />
+      <Icon className={`w-6 h-6 ${active ? 'drop-shadow-[0_0_8px_rgba(255,255,255,0.2)]' : ''}`} />
     </button>
   );
 };
 
 const MetricCard = ({ label, value, accent }) => {
   const tints = {
-    blue: 'border-blue-500/10 text-blue-400',
-    red: 'border-red-500/10 text-red-400',
-    emerald: 'border-emerald-500/10 text-emerald-400',
-    purple: 'border-purple-500/10 text-purple-400'
+    blue: 'border-blue-500/10 text-blue-400 shadow-[0_0_30px_rgba(59,130,246,0.05)]',
+    red: 'border-red-500/10 text-red-400 shadow-[0_0_30px_rgba(239,68,68,0.05)]',
+    emerald: 'border-emerald-500/10 text-emerald-400 shadow-[0_0_30px_rgba(16,185,129,0.05)]',
+    purple: 'border-purple-500/10 text-purple-400 shadow-[0_0_30px_rgba(168,85,247,0.05)]'
   };
   return (
-    <div className={`p-6 md:p-10 rounded-[2rem] md:rounded-[3.5rem] bg-[#050506] border ${tints[accent]} transition-all hover:scale-[1.03] active:scale-95 duration-700 shadow-xl`}>
-      <p className="text-[7px] md:text-[8px] font-black tracking-[0.5em] opacity-40 mb-3 md:mb-5 uppercase">{label}</p>
-      <p className="text-2xl md:text-4xl font-extralight tracking-tighter italic text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.05)] truncate">{value}</p>
+    <div className={`p-6 md:p-10 rounded-[2rem] md:rounded-[3.5rem] bg-[#050506] border ${tints[accent]} transition-all hover:scale-[1.03] active:scale-95 duration-700 shadow-xl shadow-black/40`}>
+      <p className="text-[7px] md:text-[8px] font-black tracking-[0.5em] opacity-40 mb-3 md:mb-5 uppercase italic font-black">{label}</p>
+      <p className="text-2xl md:text-4xl font-extralight tracking-tighter italic text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.1)] truncate">{value}</p>
     </div>
   );
 };
 
 const InputGroup = ({ label, type = "text", value, onChange }) => (
   <div className="space-y-3 md:space-y-4">
-    <label className="text-[8px] font-black text-slate-800 tracking-[0.6em] uppercase px-2">{label}</label>
+    <label className="text-[8px] font-black text-slate-800 tracking-[0.6em] uppercase px-2 italic font-black">{label}</label>
     <input 
       type={type} value={value} onChange={e => onChange(e.target.value)} 
-      className="w-full bg-[#010102] border border-white/5 rounded-2xl py-4 md:py-5 px-6 md:px-8 text-xs text-white focus:outline-none focus:border-white/20 transition-all font-bold tracking-[0.2em] uppercase shadow-inner"
+      className="w-full bg-[#010102] border border-white/5 rounded-2xl py-4 md:py-5 px-6 md:px-8 text-xs text-white focus:outline-none focus:border-white/20 transition-all font-bold tracking-[0.2em] uppercase shadow-inner italic"
     />
   </div>
 );
 
 const StatusBadge = ({ status }) => {
   const styles = {
-    'Completed': 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
-    'In Progress': 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+    'Completed': 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 drop-shadow-[0_0_5px_rgba(16,185,129,0.3)]',
+    'In Progress': 'bg-blue-500/10 text-blue-400 border-blue-500/20 drop-shadow-[0_0_5px_rgba(59,130,246,0.3)]',
     'Not Started': 'bg-white/5 text-slate-500 border-white/10',
     'Cancelled': 'bg-red-500/10 text-red-500 border-red-500/20'
   };
-  return <span className={`inline-block text-[7px] md:text-[8px] font-black uppercase tracking-[0.4em] px-3 md:px-4 py-1.5 md:py-2 rounded-full border ${styles[status]}`}>{status}</span>;
+  return <span className={`inline-block text-[7px] md:text-[8px] font-black uppercase tracking-[0.4em] px-3 md:px-4 py-1.5 md:py-2 rounded-full border ${styles[status]} italic font-black`}>{status}</span>;
 };
 
 // --- AUTH LOGIC ---
@@ -371,23 +410,24 @@ const Login = ({ onLogin }) => {
 
   return (
     <div className="h-screen bg-[#010102] flex items-center justify-center p-6 font-extralight">
-      <form onSubmit={check} className={`w-full max-w-md p-12 md:p-20 bg-[#050506] border border-white/5 rounded-[4rem] md:rounded-[5rem] text-center transition-all duration-1000 ${error ? 'border-red-500/50' : 'shadow-[0_60px_120px_-30px_rgba(0,0,0,0.9)]'}`}>
-        <div className="w-20 h-20 md:w-28 md:h-28 bg-white rounded-full mx-auto mb-12 md:mb-16 flex items-center justify-center shadow-[0_0_60px_rgba(255,255,255,0.1)]">
-          <ShieldCheck className="w-8 h-8 md:w-10 md:h-10 text-black" />
+      <form onSubmit={check} className={`w-full max-w-md p-12 md:p-20 bg-[#050506] border border-white/5 rounded-[4rem] md:rounded-[5rem] text-center transition-all duration-1000 ${error ? 'border-red-500/50 shake' : 'shadow-[0_60px_120px_-30px_rgba(0,0,0,0.9)] shadow-black/80'}`}>
+        <div className="w-20 h-20 md:w-28 md:h-28 bg-white rounded-full mx-auto mb-12 md:mb-16 flex items-center justify-center shadow-[0_0_60px_rgba(255,255,255,0.15)] group">
+          <ShieldCheck className="w-8 h-8 md:w-10 md:h-10 text-black group-hover:scale-110 transition-transform duration-700" />
         </div>
         <h1 className="text-2xl md:text-3xl font-thin text-white tracking-[0.5em] mb-4 uppercase italic">UY Studios</h1>
-        <p className="text-[9px] font-black text-slate-800 tracking-[0.6em] mb-12 md:mb-16 uppercase">Executive Terminal v3.4.1</p>
+        <p className="text-[9px] font-black text-slate-800 tracking-[0.6em] mb-12 md:mb-16 uppercase italic font-black tracking-[0.7em]">Neural Terminal v1</p>
         <input 
           type="password" autoFocus onChange={e => setVal(e.target.value)} 
-          className="w-full bg-[#010102] border border-white/5 rounded-2xl md:rounded-[2.5rem] py-6 md:py-8 px-8 text-center text-white tracking-[1.5em] md:tracking-[2em] focus:outline-none focus:border-white/20 mb-10 md:mb-12 font-mono text-xl md:text-2xl"
+          className="w-full bg-[#010102] border border-white/5 rounded-2xl md:rounded-[2.5rem] py-6 md:py-8 px-8 text-center text-white tracking-[1.5em] md:tracking-[2em] focus:outline-none focus:border-white/20 mb-10 md:mb-12 font-mono text-xl md:text-2xl shadow-inner shadow-black/50"
         />
-        <button type="submit" className="w-full bg-white text-black py-6 md:py-8 rounded-full font-black tracking-[0.6em] hover:shadow-[0_0_40px_rgba(255,255,255,0.2)] transition-all uppercase text-[10px]">INITIALIZE</button>
+        <button type="submit" className="w-full bg-white text-black py-6 md:py-8 rounded-full font-black tracking-[0.6em] hover:shadow-[0_0_40px_rgba(255,255,255,0.2)] transition-all uppercase text-[10px] font-black italic">Initialize Link</button>
       </form>
     </div>
   );
 };
 
-// --- EXPENSE EDIT/NEW MODAL ---
+// --- MODALS ---
+
 function ExpenseModal({ expense, onClose }) {
   const [form, setForm] = useState(expense || { description: '', amount: 0, date: '', category: 'Equipment' });
 
@@ -399,23 +439,22 @@ function ExpenseModal({ expense, onClose }) {
 
   return (
     <div className="fixed inset-0 bg-black/95 backdrop-blur-3xl flex items-center justify-center p-4 z-[200] animate-in fade-in duration-500">
-      <form onSubmit={save} className="bg-[#050506] border border-white/10 p-8 md:p-16 rounded-[3rem] md:rounded-[4rem] w-full max-w-xl space-y-8 shadow-[0_0_100px_rgba(16,185,129,0.1)]">
-        <h3 className="text-xl font-thin tracking-[0.5em] text-white italic uppercase">{expense ? 'Edit Expense' : 'Log Expense'}</h3>
-        <InputGroup label="Description" value={form.description} onChange={v => setForm({...form, description: v})} />
+      <form onSubmit={save} className="bg-[#050506] border border-white/10 p-8 md:p-16 rounded-[3rem] md:rounded-[4rem] w-full max-w-xl space-y-8 shadow-[0_0_100px_rgba(16,185,129,0.15)] shadow-emerald-500/10">
+        <h3 className="text-xl font-thin tracking-[0.5em] text-white italic uppercase">{expense ? 'Update Debit' : 'Authorize Debit'}</h3>
+        <InputGroup label="Descriptor" value={form.description} onChange={v => setForm({...form, description: v})} />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
-          <InputGroup label="Amount ($)" type="number" value={form.amount} onChange={v => setForm({...form, amount: v})} />
-          <InputGroup label="Timestamp" type="date" value={form.date} onChange={v => setForm({...form, date: v})} />
+          <InputGroup label="Quantum ($)" type="number" value={form.amount} onChange={v => setForm({...form, amount: v})} />
+          <InputGroup label="Temporal Marker" type="date" value={form.date} onChange={v => setForm({...form, date: v})} />
         </div>
         <div className="flex gap-4 pt-4">
-           <button type="submit" className="flex-1 py-6 md:py-7 bg-white text-black font-black tracking-[0.5em] rounded-3xl hover:bg-emerald-500 hover:text-white transition-all uppercase text-[9px]">COMMIT ENTRY</button>
-           <button type="button" onClick={onClose} className="p-6 md:p-7 bg-white/5 rounded-3xl text-white hover:bg-red-500/20 transition-all"><X className="w-5 h-5" /></button>
+           <button type="submit" className="flex-1 py-6 md:py-7 bg-white text-black font-black tracking-[0.5em] rounded-3xl hover:bg-emerald-500 hover:text-white transition-all uppercase text-[9px] font-black italic">Commit to Ledger</button>
+           <button type="button" onClick={onClose} className="p-6 md:p-7 bg-white/5 rounded-3xl text-white hover:bg-red-500/20 transition-all shadow-lg active:scale-75"><X className="w-5 h-5" /></button>
         </div>
       </form>
     </div>
   );
 }
 
-// --- PROJECT EDIT/NEW MODAL ---
 function ProjectModal({ project, onClose }) {
   const [form, setForm] = useState(project || {
     clientName: '', eventType: '', date: '', location: '', mapsLink: '', filesLink: '',
@@ -430,33 +469,33 @@ function ProjectModal({ project, onClose }) {
 
   return (
     <div className="fixed inset-0 bg-black/95 backdrop-blur-3xl flex items-center justify-center p-4 z-[200] animate-in fade-in zoom-in duration-500">
-      <div className="bg-[#050506] border border-white/10 w-full max-w-3xl rounded-[3rem] md:rounded-[4rem] p-8 md:p-16 overflow-y-auto max-h-[90vh] shadow-[0_0_120px_rgba(59,130,246,0.15)] custom-scrollbar">
-        <header className="flex justify-between items-center mb-10 md:mb-16">
-          <h3 className="text-xl md:text-2xl font-thin text-white tracking-[0.5em] italic uppercase">{project ? 'Edit Project' : 'New Shoot'}</h3>
-          <button onClick={onClose} className="p-4 bg-white/5 rounded-full hover:bg-white text-black transition-all"><X className="w-5 h-5" /></button>
+      <div className="bg-[#050506] border border-white/10 w-full max-w-3xl rounded-[3rem] md:rounded-[4rem] p-8 md:p-16 overflow-y-auto max-h-[90vh] shadow-[0_0_120px_rgba(59,130,246,0.2)] shadow-blue-500/10 custom-scrollbar">
+        <header className="flex justify-between items-center mb-10 md:mb-16 italic">
+          <h3 className="text-xl md:text-2xl font-thin text-white tracking-[0.5em] italic uppercase">{project ? 'Update Entry' : 'New Assignment'}</h3>
+          <button onClick={onClose} className="p-4 bg-white/5 rounded-full hover:bg-white text-black transition-all shadow-lg active:scale-75"><X className="w-5 h-5" /></button>
         </header>
 
         <form onSubmit={save} className="space-y-10 md:space-y-12">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12">
-            <InputGroup label="Client" value={form.clientName} onChange={v => setForm({...form, clientName: v})} />
-            <InputGroup label="Type" value={form.eventType} onChange={v => setForm({...form, eventType: v})} />
-            <InputGroup label="Date" type="date" value={form.date} onChange={v => setForm({...form, date: v})} />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 italic font-black uppercase">
+            <InputGroup label="Client Vector" value={form.clientName} onChange={v => setForm({...form, clientName: v})} />
+            <InputGroup label="Project Domain" value={form.eventType} onChange={v => setForm({...form, eventType: v})} />
+            <InputGroup label="Timeline Marker" type="date" value={form.date} onChange={v => setForm({...form, date: v})} />
             <div className="space-y-4">
-              <label className="text-[8px] font-black text-slate-800 tracking-[0.6em] uppercase px-2">Status</label>
-              <select value={form.status} onChange={e => setForm({...form, status: e.target.value})} className="w-full bg-[#010102] border border-white/5 rounded-2xl py-5 md:py-6 px-8 text-xs text-white focus:outline-none appearance-none font-bold tracking-widest uppercase">
-                <option value="Not Started">Scheduled</option>
+              <label className="text-[8px] font-black text-slate-800 tracking-[0.6em] uppercase px-2 italic font-black">Assignment Phase</label>
+              <select value={form.status} onChange={e => setForm({...form, status: e.target.value})} className="w-full bg-[#010102] border border-white/5 rounded-2xl py-5 md:py-6 px-8 text-xs text-white focus:outline-none appearance-none font-bold tracking-widest uppercase italic font-black shadow-inner">
+                <option value="Not Started">Standby</option>
                 <option value="In Progress">Active</option>
-                <option value="Completed">Delivered</option>
-                <option value="Cancelled">Archived</option>
+                <option value="Completed">Archived</option>
+                <option value="Cancelled">Aborted</option>
               </select>
             </div>
           </div>
-          <InputGroup label="Venue" value={form.location} onChange={v => setForm({...form, location: v})} />
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-8 border-t border-white/5">
-            <InputGroup label="Contract ($)" type="number" value={form.budget} onChange={v => setForm({...form, budget: v})} />
-            <InputGroup label="Paid ($)" type="number" value={form.paid} onChange={v => setForm({...form, paid: v})} />
+          <InputGroup label="Venue Coordinates" value={form.location} onChange={v => setForm({...form, location: v})} />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-8 border-t border-white/5 italic font-black uppercase">
+            <InputGroup label="Quote Yield ($)" type="number" value={form.budget} onChange={v => setForm({...form, budget: v})} />
+            <InputGroup label="Liquidity Injected ($)" type="number" value={form.paid} onChange={v => setForm({...form, paid: v})} />
           </div>
-          <button type="submit" className="w-full py-7 md:py-9 bg-white text-black font-black tracking-[0.6em] rounded-3xl hover:bg-blue-600 hover:text-white transition-all uppercase text-[9px] md:text-[10px]">SAVE CHANGES</button>
+          <button type="submit" className="w-full py-7 md:py-9 bg-white text-black font-black tracking-[0.7em] rounded-3xl hover:bg-blue-600 hover:text-white transition-all uppercase text-[9px] md:text-[10px] italic font-black shadow-2xl">Confirm Production Parameters</button>
         </form>
       </div>
     </div>
