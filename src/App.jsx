@@ -83,9 +83,10 @@ export default function App() {
         </div>
 
         <nav className="flex-1 px-6 py-10 space-y-6">
-          <NavItem icon={Activity} label="Overview" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard'} color="blue" collapsed={isSidebarCollapsed} />
-          <NavItem icon={Terminal} label="Productions" active={activeTab === 'projects'} onClick={() => setActiveTab('projects'} color="purple" collapsed={isSidebarCollapsed} />
-          <NavItem icon={Receipt} label="Financials" active={activeTab === 'expenses'} onClick={() => setActiveTab('expenses'} color="emerald" collapsed={isSidebarCollapsed} />
+          {/* FIXED: Added missing closing parentheses in onClick handlers below */}
+          <NavItem icon={Activity} label="Overview" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} color="blue" collapsed={isSidebarCollapsed} />
+          <NavItem icon={Terminal} label="Productions" active={activeTab === 'projects'} onClick={() => setActiveTab('projects')} color="purple" collapsed={isSidebarCollapsed} />
+          <NavItem icon={Receipt} label="Financials" active={activeTab === 'expenses'} onClick={() => setActiveTab('expenses')} color="emerald" collapsed={isSidebarCollapsed} />
         </nav>
       </aside>
 
@@ -179,7 +180,7 @@ function DashboardView({ projects, expenses }) {
             <p className="text-5xl md:text-6xl font-extralight tracking-tighter italic">${(totalRev - totalBurn).toLocaleString()}</p>
           </div>
           <div className="space-y-6 pt-12 border-t border-black/5 hidden md:block">
-            <p className="text-[9px] leading-relaxed font-bold uppercase tracking-[0.2em] opacity-30">UY Studios Infrastructure v3.4</p>
+            <p className="text-[9px] leading-relaxed font-bold uppercase tracking-[0.2em] opacity-30">UY Studios Infrastructure v1</p>
           </div>
         </div>
       </div>
@@ -220,7 +221,7 @@ function ExpensesView({ expenses }) {
                 <td className="px-8 py-6 text-right">
                   <div className="flex gap-4 justify-end">
                     <button onClick={() => { setEditData(e); setShowModal(true); }} className="p-3 bg-white/5 rounded-full hover:bg-white hover:text-black transition-all active:scale-75"><Edit3 className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => deleteDoc(doc(db, 'expenses', e.id))} className="p-3 bg-red-500/10 rounded-full hover:bg-red-500 hover:text-white transition-all active:scale-75"><Trash2 className="w-3.5 h-3.5 text-red-500 hover:text-white" /></button>
+                    <button onClick={() => deleteDoc(doc(db, 'expenses', e.id))} className="p-3 bg-red-500/10 rounded-full hover:bg-red-500 hover:text-white transition-all active:scale-75"><Trash2 className="w-3.5 h-3.5 text-red-500" /></button>
                   </div>
                 </td>
               </tr>
@@ -264,10 +265,10 @@ function ProjectsView({ projects }) {
             </div>
 
             <div className="grid grid-cols-2 gap-3 md:gap-4 mb-10 md:mb-12 font-bold">
-               <a href={p.mapsLink} target="_blank" className="p-4 md:p-6 bg-white/[0.01] border border-white/5 rounded-2xl text-[8px] tracking-[0.2em] text-slate-600 uppercase flex items-center gap-3 md:gap-4 hover:border-blue-500/50 hover:text-blue-400 transition-all overflow-hidden">
+               <a href={p.mapsLink} target="_blank" rel="noreferrer" className="p-4 md:p-6 bg-white/[0.01] border border-white/5 rounded-2xl text-[8px] tracking-[0.2em] text-slate-600 uppercase flex items-center gap-3 md:gap-4 hover:border-blue-500/50 hover:text-blue-400 transition-all overflow-hidden">
                  <MapPin className="w-3.5 h-3.5 flex-shrink-0" /> <span className="truncate">{p.location || 'Pending'}</span>
                </a>
-               <a href={p.filesLink} target="_blank" className="p-4 md:p-6 bg-white/[0.01] border border-white/5 rounded-2xl text-[8px] tracking-[0.2em] text-slate-600 uppercase flex items-center gap-3 md:gap-4 hover:border-emerald-500/50 hover:text-emerald-400 transition-all">
+               <a href={p.filesLink} target="_blank" rel="noreferrer" className="p-4 md:p-6 bg-white/[0.01] border border-white/5 rounded-2xl text-[8px] tracking-[0.2em] text-slate-600 uppercase flex items-center gap-3 md:gap-4 hover:border-emerald-500/50 hover:text-emerald-400 transition-all">
                  <Globe className="w-3.5 h-3.5 flex-shrink-0" /> Cloud
                </a>
             </div>
@@ -375,7 +376,7 @@ const Login = ({ onLogin }) => {
           <ShieldCheck className="w-8 h-8 md:w-10 md:h-10 text-black" />
         </div>
         <h1 className="text-2xl md:text-3xl font-thin text-white tracking-[0.5em] mb-4 uppercase italic">UY Studios</h1>
-        <p className="text-[9px] font-black text-slate-800 tracking-[0.6em] mb-12 md:mb-16 uppercase">Executive Terminal v3.4</p>
+        <p className="text-[9px] font-black text-slate-800 tracking-[0.6em] mb-12 md:mb-16 uppercase">Executive Terminal v3.4.1</p>
         <input 
           type="password" autoFocus onChange={e => setVal(e.target.value)} 
           className="w-full bg-[#010102] border border-white/5 rounded-2xl md:rounded-[2.5rem] py-6 md:py-8 px-8 text-center text-white tracking-[1.5em] md:tracking-[2em] focus:outline-none focus:border-white/20 mb-10 md:mb-12 font-mono text-xl md:text-2xl"
