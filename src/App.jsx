@@ -1,57 +1,64 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { initializeApp, getApps } from 'firebase/app';
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
 import { 
-  getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, 
-  onSnapshot, query, serverTimestamp 
+  getFirestore, 
+  collection, 
+  addDoc, 
+  onSnapshot, 
+  query, 
+  doc, 
+  setDoc,
+  deleteDoc
 } from 'firebase/firestore';
 import { 
-  getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged 
+  getAuth, 
+  signInAnonymously, 
+  signInWithCustomToken, 
+  onAuthStateChanged 
 } from 'firebase/auth';
 import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, AreaChart, Area
-} from 'recharts';
-import { 
-  LayoutDashboard, Briefcase, Receipt, Plus, Users, MapPin, 
-  ChevronLeft, ChevronRight, Menu, X, DollarSign, Calendar,
-  ExternalLink, Trash2, Camera, Clock, UserPlus, TrendingUp, 
-  AlertCircle, Link2, HardDrive, Info, CheckCircle2, Edit3, Save, Search
+  Plus, 
+  X, 
+  DollarSign, 
+  User, 
+  Briefcase, 
+  Calendar, 
+  FileText, 
+  AlertCircle,
+  Loader2,
+  ChevronDown,
+  Trash2,
+  Users
 } from 'lucide-react';
 
-// --- Firebase Configuration & Initialization ---
-const firebaseConfig = typeof __firebase_config !== 'undefined' 
-  ? JSON.parse(__firebase_config) 
-  : null;
+// --- Firebase Configuration ---
+// These global variables are provided by the environment at runtime
+const firebaseConfig = JSON.parse(__firebase_config);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'expense-tracker-v1';
 
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'lumina-studio-pro';
-
-// CRITICAL: Initialize outside components to prevent re-init loops
-let db, auth;
-if (firebaseConfig && firebaseConfig.apiKey) {
-  const app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
-  auth = getAuth(app);
-  db = getFirestore(app);
-}
-
-const PROJECT_STATUSES = ['Not Started', 'Ongoing', 'Completed', 'Cancelled'];
-const EXPENSE_TYPES = ['Equipment', 'Rentals', 'Travel', 'Software', 'Marketing', 'Office', 'Other'];
+// Initialize Firebase services immediately
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(!!firebaseConfig);
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  
-  const [projects, setProjects] = useState([]);
   const [expenses, setExpenses] = useState([]);
-  const [isAddingProject, setIsAddingProject] = useState(false);
-  const [isAddingExpense, setIsAddingExpense] = useState(false);
-  const [editingProject, setEditingProject] = useState(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  
+  const [formData, setFormData] = useState({
+    category: 'Equipment',
+    amount: '',
+    date: new Date().toISOString().split('T')[0],
+    reason: '',
+    teamMember: '',
+    role: '',
+    pay: ''
+  });
 
-  // RULE 3: AUTHENTICATE FIRST
+  // 1. Mandatory Authentication Flow
   useEffect(() => {
-    if (!firebaseConfig || !auth) return;
-
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -60,394 +67,355 @@ export default function App() {
           await signInAnonymously(auth);
         }
       } catch (err) {
-        console.error("Auth Error:", err);
-      } finally {
-        setAuthLoading(false);
+        console.error("Authentication failed:", err);
       }
     };
 
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, (u) => setUser(u));
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setIsInitialLoading(false);
+    });
     return () => unsubscribe();
   }, []);
 
-  // RULE 1: STRICT PATHS & RULE 2: SIMPLE QUERIES
+  // 2. Real-time Data Syncing (Across Devices)
   useEffect(() => {
-    if (!user || !db) return;
+    if (!user) return;
 
-    // MANDATORY PATH STRUCTURE: /artifacts/{appId}/public/data/{collection}
-    const pRef = collection(db, 'artifacts', appId, 'public', 'data', 'projects');
-    const eRef = collection(db, 'artifacts', appId, 'public', 'data', 'expenses');
+    // RULE 1: Use the strict public data path for global syncing
+    const expensesCol = collection(db, 'artifacts', appId, 'public', 'data', 'expenses');
+    
+    // RULE 2: Simple query to avoid index requirements
+    const unsubscribe = onSnapshot(expensesCol, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ 
+        id: doc.id, 
+        ...doc.data() 
+      }));
+      
+      // Sort by date (descending) in memory
+      const sortedData = data.sort((a, b) => new Date(b.date) - new Date(a.date));
+      setExpenses(sortedData);
+    }, (error) => {
+      console.error("Firestore sync error:", error);
+    });
 
-    const unsubP = onSnapshot(pRef, 
-      (s) => setProjects(s.docs.map(d => ({ id: d.id, ...d.data() }))),
-      (err) => console.error("Project Sync Error:", err)
-    );
-
-    const unsubE = onSnapshot(eRef, 
-      (s) => setExpenses(s.docs.map(d => ({ id: d.id, ...d.data() }))),
-      (err) => console.error("Expense Sync Error:", err)
-    );
-
-    return () => { unsubP(); unsubE(); };
+    return () => unsubscribe();
   }, [user]);
 
-  // Financial Logic
-  const chartData = useMemo(() => {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const currentYear = new Date().getFullYear();
-    
-    return months.map((month, idx) => {
-      const mProjects = projects.filter(p => {
-        const d = p.date ? new Date(p.date) : null;
-        return d && d.getMonth() === idx && d.getFullYear() === currentYear;
-      });
-      const mExpenses = expenses.filter(e => {
-        const d = e.date ? new Date(e.date) : null;
-        return d && d.getMonth() === idx && d.getFullYear() === currentYear;
-      });
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!user) return;
 
-      const revenue = mProjects.reduce((sum, p) => sum + (Number(p.amountPaid) || 0), 0);
-      const budget = mProjects.reduce((sum, p) => sum + (Number(p.budget) || 0), 0);
-      const teamCosts = mProjects.reduce((sum, p) => sum + (p.team?.reduce((tSum, m) => tSum + (Number(m.cost) || 0), 0) || 0), 0);
-      const overhead = mExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
-
-      return { 
-        name: month, 
-        revenue, 
-        owed: Math.max(0, budget - revenue), 
-        expenses: overhead + teamCosts
+    try {
+      const expensesCol = collection(db, 'artifacts', appId, 'public', 'data', 'expenses');
+      
+      const payload = {
+        category: formData.category,
+        amount: parseFloat(formData.amount) || 0,
+        pay: parseFloat(formData.pay) || 0,
+        date: formData.date,
+        reason: formData.reason,
+        teamMember: formData.teamMember,
+        role: formData.role,
+        createdBy: user.uid,
+        userName: user.isAnonymous ? 'Guest User' : user.displayName || user.email || 'Team Member',
+        createdAt: new Date().toISOString()
       };
-    });
-  }, [projects, expenses]);
 
-  const handleProjectAction = async (e) => {
-    e.preventDefault();
-    if (!user) return; // Guard clause
-    
-    const fd = new FormData(e.target);
-    const teamNames = fd.getAll('teamName');
-    const teamRoles = fd.getAll('teamRole');
-    const teamCosts = fd.getAll('teamCost');
-    const team = teamNames.map((name, i) => ({
-      name, role: teamRoles[i], cost: Number(teamCosts[i]) || 0
-    })).filter(m => m.name);
-
-    const payload = {
-      clientName: fd.get('clientName'),
-      eventType: fd.get('eventType'),
-      duration: fd.get('duration'),
-      location: fd.get('location'),
-      mapsLink: fd.get('mapsLink'),
-      budget: Number(fd.get('budget')),
-      amountPaid: Number(fd.get('amountPaid')),
-      date: fd.get('date'),
-      status: fd.get('status'),
-      team,
-      updatedAt: serverTimestamp()
-    };
-
-    try {
-      const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'projects');
-      if (editingProject) {
-        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'projects', editingProject.id), payload);
-      } else {
-        await addDoc(colRef, payload);
-      }
-      setIsAddingProject(false);
-      setEditingProject(null);
+      await addDoc(expensesCol, payload);
+      
+      setIsModalOpen(false);
+      setFormData({
+        category: 'Equipment',
+        amount: '',
+        date: new Date().toISOString().split('T')[0],
+        reason: '',
+        teamMember: '',
+        role: '',
+        pay: ''
+      });
     } catch (err) {
-      console.error("Firestore Save Error:", err);
+      console.error("Failed to save expense:", err);
     }
   };
 
-  const handleAddExpense = async (e) => {
-    e.preventDefault();
-    if (!user) return;
-    
-    const fd = new FormData(e.target);
-    const payload = {
-      type: fd.get('type'),
-      amount: Number(fd.get('amount')),
-      date: fd.get('date'),
-      reason: fd.get('reason'),
-      createdAt: serverTimestamp()
-    };
-
+  const deleteExpense = async (id) => {
+    if (!confirm('Are you sure you want to delete this record?')) return;
     try {
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'expenses'), payload);
-      setIsAddingExpense(false);
+      const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'expenses', id);
+      await deleteDoc(docRef);
     } catch (err) {
-      console.error("Firestore Expense Error:", err);
+      console.error("Delete failed:", err);
     }
   };
 
-  const handleDeleteProject = async (id) => {
-    if (!user) return;
-    try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'projects', id));
-    } catch (err) {
-      console.error("Delete Error:", err);
-    }
-  };
+  if (isInitialLoading) {
+    return (
+      <div className="min-h-screen bg-[#0f111a] flex flex-col items-center justify-center text-slate-400">
+        <Loader2 className="w-10 h-10 animate-spin text-pink-500 mb-4" />
+        <p>Connecting to secure database...</p>
+      </div>
+    );
+  }
 
-  // Nav Item Component
-  const NavItem = ({ id, icon: Icon, label }) => (
-    <button
-      onClick={() => { setActiveTab(id); setIsMobileMenuOpen(false); }}
-      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-        activeTab === id 
-        ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' 
-        : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'
-      }`}
-    >
-      <Icon size={20} />
-      {(!isSidebarCollapsed || isMobileMenuOpen) && <span className="font-semibold text-sm">{label}</span>}
-    </button>
-  );
+  const totalSpend = expenses.reduce((acc, curr) => acc + (curr.amount || 0) + (curr.pay || 0), 0);
+  const totalLabor = expenses.reduce((acc, curr) => acc + (curr.pay || 0), 0);
 
   return (
-    <div className="flex h-screen bg-[#08080a] text-slate-100 overflow-hidden font-sans">
-      {/* Sidebar */}
-      <aside className={`hidden md:flex flex-col border-r border-white/5 bg-[#0d0d0f] transition-all duration-300 z-50 ${isSidebarCollapsed ? 'w-20' : 'w-64'}`}>
-        <div className="p-6 flex items-center justify-between mb-4">
-          {!isSidebarCollapsed && (
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                <Camera size={18} className="text-white" />
-              </div>
-              <h1 className="text-lg font-black tracking-tighter uppercase italic text-white">Lumina</h1>
-            </div>
-          )}
-          <button onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} className="p-2 hover:bg-white/5 rounded-lg text-slate-500">
-            {isSidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-          </button>
-        </div>
-        <nav className="flex-1 px-3 space-y-1">
-          <NavItem id="dashboard" icon={LayoutDashboard} label="Dashboard" />
-          <NavItem id="projects" icon={Briefcase} label="Projects" />
-          <NavItem id="expenses" icon={Receipt} label="Expenses" />
-        </nav>
-        <div className="p-4">
-           <div className="p-3 rounded-xl border border-white/5 bg-white/5 flex justify-center">
-              {user ? (
-                <div className="flex items-center gap-2 text-emerald-500">
-                   <CheckCircle2 size={16} />
-                   {!isSidebarCollapsed && <span className="text-[10px] font-black uppercase">Connected</span>}
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-amber-500">
-                   <Info size={16} />
-                   {!isSidebarCollapsed && <span className="text-[10px] font-black uppercase tracking-wider">Demo Mode</span>}
-                </div>
-              )}
-           </div>
-        </div>
-      </aside>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0">
-        <header className="md:hidden flex items-center justify-between px-6 h-16 bg-[#0d0d0f] border-b border-white/5">
+    <div className="min-h-screen bg-[#0f111a] text-slate-200 font-sans selection:bg-pink-500/30">
+      {/* Top Navigation */}
+      <nav className="border-b border-slate-800 bg-[#0f111a]/80 backdrop-blur-md sticky top-0 z-40">
+        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Camera size={20} className="text-indigo-500" />
-            <h1 className="font-black text-sm uppercase italic">LUMINA</h1>
-          </div>
-          <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 text-slate-400">
-            {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
-        </header>
-
-        {isMobileMenuOpen && (
-          <div className="md:hidden fixed inset-0 bg-[#0a0a0c] z-[60] p-6 pt-20 space-y-4">
-            <NavItem id="dashboard" icon={LayoutDashboard} label="Dashboard" />
-            <NavItem id="projects" icon={Briefcase} label="Projects" />
-            <NavItem id="expenses" icon={Receipt} label="Expenses" />
-          </div>
-        )}
-
-        <main className="flex-1 overflow-y-auto p-4 md:p-10">
-          {!user && (
-            <div className="mb-8 p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center gap-3 text-amber-400 text-xs font-bold uppercase animate-pulse">
-              <AlertCircle size={18} />
-              <span>Running in Demo Mode. Connect Firebase to sync data.</span>
+            <div className="w-8 h-8 bg-pink-600 rounded-lg flex items-center justify-center">
+              <DollarSign className="text-white w-5 h-5" />
             </div>
-          )}
-
-          <div className="max-w-7xl mx-auto">
-            {activeTab === 'dashboard' && (
-              <div>
-                <div className="mb-10">
-                  <h2 className="text-5xl font-black text-white mb-2">Insights</h2>
-                  <p className="text-slate-500">Live studio performance.</p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
-                  {[
-                    { label: 'Revenue', val: chartData.reduce((a, b) => a + b.revenue, 0), color: 'text-emerald-400', icon: TrendingUp },
-                    { label: 'Owed', val: chartData.reduce((a, b) => a + b.owed, 0), color: 'text-amber-400', icon: Clock },
-                    { label: 'Expenses', val: chartData.reduce((a, b) => a + b.expenses, 0), color: 'text-rose-400', icon: Receipt }
-                  ].map((stat, i) => (
-                    <div key={i} className="bg-[#111114] border border-white/5 p-8 rounded-[2rem]">
-                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">{stat.label}</p>
-                      <p className={`text-4xl font-black ${stat.color}`}>${stat.val.toLocaleString()}</p>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="bg-[#111114] border border-white/5 p-8 rounded-[2.5rem] h-[450px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={chartData}>
-                        <defs>
-                          <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
-                            <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                          </linearGradient>
-                          <linearGradient id="colorExp" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.2}/>
-                            <stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/>
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} opacity={0.2} />
-                        <XAxis dataKey="name" stroke="#475569" fontSize={11} tickLine={false} axisLine={false} />
-                        <YAxis stroke="#475569" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} />
-                        <Tooltip contentStyle={{ backgroundColor: '#0d0d0f', border: '1px solid #1e293b', borderRadius: '12px' }} />
-                        <Area type="monotone" dataKey="revenue" stroke="#10b981" strokeWidth={3} fill="url(#colorRev)" />
-                        <Area type="monotone" dataKey="expenses" stroke="#f43f5e" strokeWidth={3} fill="url(#colorExp)" />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'projects' && (
-              <div className="space-y-6">
-                <div className="flex justify-between items-center">
-                  <h2 className="text-4xl font-black text-white">Productions</h2>
-                  <button onClick={() => setIsAddingProject(true)} className="bg-indigo-600 px-6 py-3 rounded-xl font-bold flex items-center gap-2">
-                    <Plus size={18}/> New
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {projects.map(p => (
-                    <div key={p.id} className="bg-[#111114] border border-white/5 p-8 rounded-[2rem] relative group">
-                      <div className="flex justify-between items-start mb-4">
-                        <div>
-                          <span className="text-[10px] font-black text-indigo-400 uppercase bg-indigo-500/10 px-2 py-1 rounded mb-2 inline-block">
-                            {p.status}
-                          </span>
-                          <h4 className="text-2xl font-black text-white">{p.clientName}</h4>
-                        </div>
-                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => { setEditingProject(p); setIsAddingProject(true); }} className="p-2 text-slate-500 hover:text-white"><Edit3 size={16}/></button>
-                          <button onClick={() => handleDeleteProject(p.id)} className="p-2 text-slate-700 hover:text-rose-500"><Trash2 size={16}/></button>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4 text-slate-400 text-sm mb-6">
-                        <div className="flex items-center gap-1"><Calendar size={14}/> {p.date}</div>
-                        <div className="flex items-center gap-1"><MapPin size={14}/> {p.location}</div>
-                      </div>
-                      <div className="flex justify-between items-end border-t border-white/5 pt-6">
-                        <div>
-                          <p className="text-[9px] font-black text-slate-500 uppercase mb-1">Budget</p>
-                          <p className="text-xl font-black text-emerald-400">${p.budget?.toLocaleString()}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-[9px] font-black text-slate-500 uppercase mb-1">Crew</p>
-                          <p className="text-lg font-black text-white">{p.team?.length || 0}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'expenses' && (
-              <div className="space-y-6">
-                <div className="flex justify-between items-center">
-                  <h2 className="text-4xl font-black text-white">Ledger</h2>
-                  <button onClick={() => setIsAddingExpense(true)} className="bg-rose-600 px-6 py-3 rounded-xl font-bold flex items-center gap-2">
-                    <Plus size={18}/> Add Entry
-                  </button>
-                </div>
-                <div className="bg-[#111114] border border-white/5 rounded-[2rem] overflow-hidden">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="bg-white/5 text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                        <th className="p-6">Date</th>
-                        <th className="p-6">Category</th>
-                        <th className="p-6">Reason</th>
-                        <th className="p-6 text-right">Value</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {expenses.map(e => (
-                        <tr key={e.id} className="text-sm">
-                          <td className="p-6 text-slate-500">{e.date}</td>
-                          <td className="p-6"><span className="text-rose-400 font-bold">{e.type}</span></td>
-                          <td className="p-6 text-slate-300 italic">{e.reason}</td>
-                          <td className="p-6 text-right font-black text-white">-${e.amount?.toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
+            <span className="font-bold text-lg tracking-tight text-white">ProjectTracker</span>
           </div>
-        </main>
-      </div>
-
-      {/* Expense Modal */}
-      {isAddingExpense && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-[100]">
-           <div className="bg-[#11141d] border border-white/10 p-10 rounded-[2.5rem] w-full max-w-md">
-              <div className="flex justify-between mb-8">
-                <h3 className="text-2xl font-black text-rose-500 uppercase italic">New Expense</h3>
-                <button onClick={() => setIsAddingExpense(false)}><X/></button>
-              </div>
-              <form onSubmit={handleAddExpense} className="space-y-4">
-                <select name="type" className="w-full bg-black/40 border border-white/5 p-4 rounded-xl outline-none">
-                  {EXPENSE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-                <input name="amount" type="number" placeholder="Value ($)" className="w-full bg-black/40 border border-white/5 p-4 rounded-xl outline-none text-rose-400 font-black" required />
-                <input name="date" type="date" className="w-full bg-black/40 border border-white/5 p-4 rounded-xl outline-none" defaultValue={new Date().toISOString().split('T')[0]} required />
-                <textarea name="reason" placeholder="Details..." className="w-full bg-black/40 border border-white/5 p-4 rounded-xl outline-none h-24" required></textarea>
-                <button type="submit" className="w-full bg-rose-600 p-4 rounded-xl font-black uppercase tracking-widest">Commit</button>
-              </form>
-           </div>
+          <div className="flex items-center gap-4">
+             <div className="hidden md:block text-xs font-medium px-3 py-1 bg-green-500/10 text-green-400 rounded-full border border-green-500/20">
+               Live Sync Active
+             </div>
+             <span className="text-xs text-slate-500 font-mono">User: {user?.uid?.slice(0, 8)}...</span>
+          </div>
         </div>
-      )}
+      </nav>
 
-      {/* Project Form Modal */}
-      {(isAddingProject || editingProject) && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-[100] overflow-y-auto">
-          <div className="bg-[#11141d] border border-white/10 p-10 rounded-[2.5rem] w-full max-w-2xl my-auto">
-            <div className="flex justify-between mb-8">
-              <h3 className="text-2xl font-black text-indigo-500 uppercase italic">{editingProject ? 'Edit' : 'New'} Production</h3>
-              <button onClick={() => { setIsAddingProject(false); setEditingProject(null); }}><X/></button>
+      <main className="max-w-6xl mx-auto p-4 md:p-8">
+        {/* Header Section */}
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
+          <div>
+            <h1 className="text-4xl font-extrabold text-white mb-2">Financial Dashboard</h1>
+            <p className="text-slate-500">Real-time expenditure tracking for your project team.</p>
+          </div>
+          <button 
+            onClick={() => setIsModalOpen(true)}
+            className="bg-pink-600 hover:bg-pink-700 text-white px-8 py-4 rounded-2xl font-bold flex items-center justify-center gap-3 transition-all transform hover:scale-[1.02] active:scale-95 shadow-xl shadow-pink-900/20"
+          >
+            <Plus size={22} strokeWidth={3} /> Record Expense
+          </button>
+        </div>
+
+        {/* Stats Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+          <div className="bg-[#161b2c] p-8 rounded-[2rem] border border-slate-800 shadow-sm">
+            <div className="w-12 h-12 bg-slate-800 rounded-2xl flex items-center justify-center mb-4">
+              <DollarSign className="text-slate-400" />
             </div>
-            <form onSubmit={handleProjectAction} className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-4">
-                <input name="clientName" defaultValue={editingProject?.clientName} placeholder="Client" className="w-full bg-black/40 border border-white/5 p-4 rounded-xl outline-none font-bold" required />
-                <input name="eventType" defaultValue={editingProject?.eventType} placeholder="Type" className="w-full bg-black/40 border border-white/5 p-4 rounded-xl outline-none" required />
-                <input name="date" type="date" defaultValue={editingProject?.date} className="w-full bg-black/40 border border-white/5 p-4 rounded-xl outline-none" required />
-                <select name="status" defaultValue={editingProject?.status} className="w-full bg-black/40 border border-white/5 p-4 rounded-xl outline-none">
-                  {PROJECT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <input name="budget" type="number" defaultValue={editingProject?.budget} placeholder="Budget" className="w-full bg-black/40 border border-white/5 p-4 rounded-xl outline-none text-emerald-400 font-bold" required />
-                  <input name="amountPaid" type="number" defaultValue={editingProject?.amountPaid} placeholder="Paid" className="w-full bg-black/40 border border-white/5 p-4 rounded-xl outline-none text-emerald-400 font-bold" required />
+            <p className="text-slate-400 text-sm font-semibold uppercase tracking-wider mb-1">Total Expenditure</p>
+            <h2 className="text-4xl font-black text-white">${totalSpend.toLocaleString()}</h2>
+          </div>
+
+          <div className="bg-[#161b2c] p-8 rounded-[2rem] border border-slate-800 shadow-sm relative overflow-hidden group">
+            <div className="absolute top-0 right-0 p-4 opacity-10">
+              <Users size={80} />
+            </div>
+            <div className="w-12 h-12 bg-pink-500/10 rounded-2xl flex items-center justify-center mb-4">
+              <Users className="text-pink-500" />
+            </div>
+            <p className="text-slate-400 text-sm font-semibold uppercase tracking-wider mb-1">Total Labor Cost</p>
+            <h2 className="text-4xl font-black text-pink-500">${totalLabor.toLocaleString()}</h2>
+          </div>
+
+          <div className="bg-[#161b2c] p-8 rounded-[2rem] border border-slate-800 shadow-sm">
+            <div className="w-12 h-12 bg-slate-800 rounded-2xl flex items-center justify-center mb-4">
+              <FileText className="text-slate-400" />
+            </div>
+            <p className="text-slate-400 text-sm font-semibold uppercase tracking-wider mb-1">Total Items</p>
+            <h2 className="text-4xl font-black text-white">{expenses.length}</h2>
+          </div>
+        </div>
+
+        {/* Expenses List */}
+        <div className="bg-[#161b2c] rounded-[2rem] border border-slate-800 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-slate-800 flex justify-between items-center">
+            <h3 className="font-bold text-white text-lg">Transaction History</h3>
+            <div className="text-xs text-slate-500 uppercase tracking-widest font-bold">Updated Just Now</div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-900/50 text-slate-500 text-[10px] uppercase tracking-[0.2em]">
+                  <th className="px-8 py-5 font-bold">Date</th>
+                  <th className="px-8 py-5 font-bold">Category</th>
+                  <th className="px-8 py-5 font-bold">Team Member</th>
+                  <th className="px-8 py-5 font-bold">Details</th>
+                  <th className="px-8 py-5 font-bold text-right">Cost</th>
+                  <th className="px-8 py-5 font-bold text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/50">
+                {expenses.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" className="px-8 py-20 text-center">
+                      <div className="flex flex-col items-center gap-3">
+                        <FileText className="w-12 h-12 text-slate-700" />
+                        <p className="text-slate-500 font-medium">No records found. Click 'Record Expense' to start syncing.</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  expenses.map((exp) => (
+                    <tr key={exp.id} className="hover:bg-white/[0.02] transition-colors group">
+                      <td className="px-8 py-6">
+                        <div className="text-sm font-medium text-slate-400">{exp.date}</div>
+                      </td>
+                      <td className="px-8 py-6">
+                        <span className="px-3 py-1 bg-slate-800 text-slate-300 rounded-full text-[10px] font-bold border border-slate-700">
+                          {exp.category}
+                        </span>
+                      </td>
+                      <td className="px-8 py-6">
+                        <div className="font-bold text-white leading-tight">{exp.teamMember || 'General'}</div>
+                        <div className="text-[11px] text-slate-500 mt-0.5">{exp.role || 'Unassigned'}</div>
+                      </td>
+                      <td className="px-8 py-6">
+                        <div className="text-sm text-slate-300 max-w-xs truncate">{exp.reason}</div>
+                      </td>
+                      <td className="px-8 py-6 text-right">
+                        <div className="font-black text-white text-lg tracking-tight">
+                          ${((exp.amount || 0) + (exp.pay || 0)).toLocaleString()}
+                        </div>
+                        {exp.pay > 0 && (
+                          <div className="text-[10px] font-bold text-pink-500 mt-1 uppercase tracking-tighter">
+                            Incl. ${exp.pay} Pay
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-8 py-6 text-center">
+                        <button 
+                          onClick={() => deleteExpense(exp.id)}
+                          className="p-2 text-slate-600 hover:text-red-500 transition-colors"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+
+      {/* Modern Add Expense Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+          <div className="bg-[#161b2c] w-full max-w-xl rounded-[2.5rem] border border-slate-800 shadow-2xl relative overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-10">
+              <div className="flex justify-between items-center mb-10">
+                <div>
+                  <h2 className="text-4xl font-black text-pink-500 italic">Record Expense</h2>
+                  <p className="text-slate-500 text-sm mt-1">This data will sync instantly to all devices.</p>
                 </div>
-                <input name="location" defaultValue={editingProject?.location} placeholder="Location" className="w-full bg-black/40 border border-white/5 p-4 rounded-xl outline-none" />
-                <input name="mapsLink" defaultValue={editingProject?.mapsLink} placeholder="Maps Link" className="w-full bg-black/40 border border-white/5 p-4 rounded-xl outline-none text-xs text-indigo-400" />
-                <button type="submit" className="w-full bg-indigo-600 p-4 rounded-xl font-black uppercase tracking-widest shadow-xl shadow-indigo-500/20">
-                  {editingProject ? 'Save Changes' : 'Create Project'}
+                <button 
+                  onClick={() => setIsModalOpen(false)} 
+                  className="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center text-slate-400 hover:text-white transition-colors"
+                >
+                  <X size={24} />
                 </button>
               </div>
-            </form>
+
+              <form onSubmit={handleSubmit} className="space-y-6">
+                <div className="grid grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Item Category</label>
+                    <div className="relative">
+                      <select 
+                        value={formData.category}
+                        onChange={(e) => setFormData({...formData, category: e.target.value})}
+                        className="w-full bg-[#0f111a] border border-slate-800 rounded-2xl px-5 py-4 text-white appearance-none focus:outline-none focus:ring-2 focus:ring-pink-600 transition-all font-semibold"
+                      >
+                        <option>Equipment</option>
+                        <option>Labor / Payroll</option>
+                        <option>Marketing</option>
+                        <option>Software</option>
+                        <option>Travel</option>
+                        <option>Production</option>
+                      </select>
+                      <ChevronDown className="absolute right-5 top-5 text-slate-500 pointer-events-none" size={18} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Date of Expense</label>
+                    <input 
+                      type="date"
+                      value={formData.date}
+                      onChange={(e) => setFormData({...formData, date: e.target.value})}
+                      className="w-full bg-[#0f111a] border border-slate-800 rounded-2xl px-5 py-4 text-white focus:outline-none focus:ring-2 focus:ring-pink-600 transition-all font-semibold"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-[10px] font-black text-pink-500 uppercase tracking-[0.2em] mb-3 italic">Item/Service Cost ($)</label>
+                    <input 
+                      type="number"
+                      step="0.01"
+                      value={formData.amount}
+                      onChange={(e) => setFormData({...formData, amount: e.target.value})}
+                      className="w-full bg-[#0f111a] border border-slate-800 rounded-2xl px-5 py-4 text-pink-400 text-xl font-black focus:outline-none focus:ring-2 focus:ring-pink-600 transition-all"
+                      placeholder="0.00"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Team Member Pay ($)</label>
+                    <input 
+                      type="number"
+                      step="0.01"
+                      value={formData.pay}
+                      onChange={(e) => setFormData({...formData, pay: e.target.value})}
+                      className="w-full bg-[#0f111a] border border-slate-800 rounded-2xl px-5 py-4 text-white text-xl font-black focus:outline-none focus:ring-2 focus:ring-pink-600 transition-all"
+                      placeholder="0.00"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Team Member Name</label>
+                    <input 
+                      type="text"
+                      value={formData.teamMember}
+                      onChange={(e) => setFormData({...formData, teamMember: e.target.value})}
+                      className="w-full bg-[#0f111a] border border-slate-800 rounded-2xl px-5 py-4 text-white font-bold focus:outline-none focus:ring-2 focus:ring-pink-600 transition-all"
+                      placeholder="Member name"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Role / Responsibility</label>
+                    <input 
+                      type="text"
+                      value={formData.role}
+                      onChange={(e) => setFormData({...formData, role: e.target.value})}
+                      className="w-full bg-[#0f111a] border border-slate-800 rounded-2xl px-5 py-4 text-white font-bold focus:outline-none focus:ring-2 focus:ring-pink-600 transition-all"
+                      placeholder="e.g. Lead Dev"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-3">Reason / Description</label>
+                  <textarea 
+                    value={formData.reason}
+                    onChange={(e) => setFormData({...formData, reason: e.target.value})}
+                    className="w-full bg-[#0f111a] border border-slate-800 rounded-2xl px-5 py-4 text-white min-h-[100px] focus:outline-none focus:ring-2 focus:ring-pink-600 transition-all font-medium"
+                    placeholder="Briefly describe what this expense was for..."
+                  />
+                </div>
+
+                <button 
+                  type="submit"
+                  className="w-full bg-pink-600 hover:bg-pink-700 text-white font-black text-lg py-5 rounded-[1.5rem] shadow-2xl shadow-pink-900/40 transition-all active:scale-95 mt-4 uppercase tracking-widest italic"
+                >
+                  Confirm & Sync Record
+                </button>
+              </form>
+            </div>
           </div>
         </div>
       )}
