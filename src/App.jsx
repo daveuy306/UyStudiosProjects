@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area 
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Legend, ComposedChart
 } from 'recharts';
 import { 
   LayoutDashboard, FolderPlus, Receipt, Menu, X, LogIn, Search, MapPin, 
   Plus, Trash2, Edit3, Link as LinkIcon, FileText, Globe, Wifi, WifiOff,
-  ChevronRight, MoreVertical, ExternalLink, Calendar, Users, DollarSign, Activity, Terminal, ShieldCheck
+  ChevronRight, MoreVertical, ExternalLink, Calendar, Users, DollarSign, Activity, Terminal, ShieldCheck, UserPlus, UserMinus
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { 
@@ -27,30 +27,10 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// --- PRE-LOADED BOOKINGS LOG DATA  ---
+// --- PRE-LOADED BOOKINGS LOG DATA ---
 const SEED_DATA = [
-  { clientName: "Marilyn Bautista", eventType: "Engagement", date: "2024-06-08", location: "Spadina", budget: 200, paid: 200, status: "Completed" },
-  { clientName: "Lorela Viloria", eventType: "Graduation", date: "2024-06-23", location: "Spadina", budget: 100, paid: 100, status: "Completed" },
-  { clientName: "Kat Poncelet", eventType: "Graduation", date: "2024-06-26", location: "Home", budget: 300, paid: 125, status: "In Progress" },
-  { clientName: "Nene Geresola", eventType: "Graduation", date: "2024-06-27", location: "", budget: 0, paid: 0, status: "Completed" },
-  { clientName: "Jhen Gonzaga", eventType: "Wedding", date: "2024-07-13", location: "The Cardinals", budget: 700, paid: 700, status: "Completed" },
-  { clientName: "Nap Navarro", eventType: "Birthday", date: "2024-10-12", location: "Home", budget: 500, paid: 500, status: "Completed" },
-  { clientName: "Jane Pasion", eventType: "Dedication", date: "2024-12-22", location: "First Mennonite Church", budget: 200, paid: 200, status: "Completed" },
-  { clientName: "Annaliza Pacion", eventType: "Dedication", date: "2025-01-04", location: "SNLCF", budget: 290, paid: 290, status: "Completed" },
-  { clientName: "Jerrelei Sabri", eventType: "Baptism", date: "2025-04-13", location: "Sacred Heart Church", budget: 700, paid: 700, status: "Completed", filesLink: "https://www.canva.com/design/DAGjo16jRf0/QitIxuHu1VSyLO4uiSds7g/view" },
-  { clientName: "Marilyn Bautista", eventType: "Wedding", date: "2025-05-10", location: "Hilton Garden", budget: 2200, paid: 2200, status: "Completed" },
-  { clientName: "Summer Norman", eventType: "Wedding", date: "2025-05-17", location: "Family Farm", budget: 1300, paid: 1350, status: "Completed" },
-  { clientName: "Mavelyn Bautista", eventType: "Graduation", date: "2025-06-16", location: "Saskpoly", budget: 130, paid: 130, status: "Completed" },
-  { clientName: "Shania Locano", eventType: "Graduation", date: "2025-06-16", location: "Saskpoly", budget: 130, paid: 140, status: "Completed" },
-  { clientName: "James", eventType: "Graduation", date: "2025-06-16", location: "Saskpoly", budget: 80, paid: 80, status: "Completed" },
-  { clientName: "Christine Corpus", eventType: "Wedding", date: "2025-07-12", location: "Remai", budget: 3800, paid: 3800, status: "Completed" },
-  { clientName: "Edna C", eventType: "Wedding", date: "2025-08-08", location: "RUH", budget: 350, paid: 350, status: "Completed" },
-  { clientName: "Caroline Brookfield", eventType: "Keynote", date: "2025-09-17", location: "Prairieland Park", budget: 550, paid: 450, status: "Completed" },
-  { clientName: "Gracelyn Whitefish", eventType: "Wedding", date: "2025-10-25", location: "Wanuskewin", budget: 1200, paid: 0, status: "In Progress" },
-  { clientName: "Shara Miranda", eventType: "Wedding", date: "2025-11-18", location: "Hepburn, SK", budget: 700, paid: 500, status: "Completed", mapsLink: "https://goo.gl/maps/hnX3y55MTMVXPnQA7" },
-  { clientName: "IG wealth", eventType: "Corporate Event", date: "2026-05-05", location: "Saskatoon Club", budget: 500, paid: 500, status: "In Progress" },
-  { clientName: "Brandon Lee", eventType: "Wedding", date: "2026-08-29", location: "Shekinah Retreat Center", budget: 4000, paid: 0, status: "In Progress" },
-  { clientName: "IG wealth", eventType: "Headshots", date: "2026-03-30", location: "Saskatoon", budget: 400, paid: 400, status: "Completed" }
+  { clientName: "Marilyn Bautista", eventType: "Engagement", date: "2024-06-08", location: "Spadina", budget: 200, paid: 200, status: "Completed", teamMembers: [] },
+  { clientName: "Jhen Gonzaga", eventType: "Wedding", date: "2024-07-13", location: "The Cardinals", budget: 700, paid: 700, status: "Completed", teamMembers: [] }
 ];
 
 export default function App() {
@@ -62,7 +42,6 @@ export default function App() {
   const [expenses, setExpenses] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // SEED DATA FUNCTION: Automatically populates Firestore if empty
   const seedDatabase = async () => {
     const querySnapshot = await getDocs(collection(db, "projects"));
     if (querySnapshot.empty) {
@@ -107,7 +86,7 @@ export default function App() {
     <div className="flex flex-col md:flex-row h-screen bg-[#010102] text-slate-400 overflow-hidden font-extralight tracking-tight selection:bg-blue-500/30">
       
       {/* SIDEBAR NAVIGATION */}
-      <aside className={`hidden md:flex relative flex-col bg-[#050506] border-r border-white/5 transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)] ${isSidebarCollapsed ? 'w-20' : 'w-72'} shadow-[10px_0_40px_rgba(0,0,0,0.9)]`}>
+      <aside className={`hidden md:flex relative flex-col bg-[#050506] border-r border-white/5 transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)] ${isSidebarCollapsed ? 'w-20' : 'w-72'} shadow-[10px_0_40px_rgba(0,0,0,0.9)] z-50`}>
         <div className="p-8 flex items-center justify-between">
           {!isSidebarCollapsed && (
             <div className="flex items-center gap-4 animate-in fade-in zoom-in duration-1000">
@@ -137,8 +116,8 @@ export default function App() {
       </nav>
 
       {/* PRIMARY APPLICATION CORE */}
-      <main className="flex-1 flex flex-col min-w-0 h-full">
-        <header className="h-20 md:h-24 flex items-center justify-between px-6 md:px-10 border-b border-white/5 bg-[#010102]/90 backdrop-blur-3xl z-50">
+      <main className="flex-1 flex flex-col min-w-0 h-full relative z-0">
+        <header className="h-20 md:h-24 flex items-center justify-between px-6 md:px-10 border-b border-white/5 bg-[#010102]/90 backdrop-blur-3xl z-40">
           <div className="flex-1 flex items-center">
             <div className="relative w-full max-w-lg group">
               <Search className="absolute left-0 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-700 group-focus-within:text-white transition-all" />
@@ -182,33 +161,68 @@ export default function App() {
 
 function DashboardView({ projects, expenses }) {
   const totalRev = projects.reduce((s, p) => s + (Number(p.paid) || 0), 0);
+  const totalOwing = projects.reduce((s, p) => s + ((Number(p.budget) || 0) - (Number(p.paid) || 0)), 0);
   const totalBurn = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+
+  // Data processing for the consolidated chart
+  const chartData = useMemo(() => {
+    const dataMap = {};
+    
+    projects.forEach(p => {
+      const month = p.date?.substring(0, 7) || 'Unknown';
+      if (!dataMap[month]) dataMap[month] = { name: month, owing: 0, expenses: 0, revenue: 0 };
+      dataMap[month].owing += ((Number(p.budget) || 0) - (Number(p.paid) || 0));
+      dataMap[month].revenue += (Number(p.paid) || 0);
+    });
+
+    expenses.forEach(e => {
+      const month = e.date?.substring(0, 7) || 'Unknown';
+      if (!dataMap[month]) dataMap[month] = { name: month, owing: 0, expenses: 0, revenue: 0 };
+      dataMap[month].expenses += (Number(e.amount) || 0);
+    });
+
+    return Object.values(dataMap)
+      .filter(d => d.name !== 'Unknown')
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(-10); // Show last 10 months
+  }, [projects, expenses]);
 
   return (
     <div className="space-y-10 md:space-y-16 animate-in fade-in slide-in-from-bottom-4 duration-1000">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-10">
         <MetricCard label="GROSS REVENUE" value={`$${totalRev.toLocaleString()}`} accent="blue" />
+        <MetricCard label="OUTSTANDING (OWING)" value={`$${totalOwing.toLocaleString()}`} accent="purple" />
         <MetricCard label="OPERATING COSTS" value={`$${totalBurn.toLocaleString()}`} accent="red" />
-        <MetricCard label="NET MARGIN" value="84.2%" accent="emerald" />
-        <MetricCard label="ACTIVE TASKS" value={projects.filter(p => p.status === 'In Progress').length} accent="purple" />
+        <MetricCard label="ACTIVE TASKS" value={projects.filter(p => p.status === 'In Progress').length} accent="emerald" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 md:gap-12">
         <div className="lg:col-span-2 bg-[#050506] border border-white/5 rounded-[2.5rem] md:rounded-[3.5rem] p-6 md:p-12 shadow-[0_40px_80px_-15px_rgba(0,0,0,0.6)] relative overflow-hidden group">
           <div className="absolute inset-0 bg-gradient-to-br from-blue-600/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
-          <h3 className="text-[10px] font-thin tracking-[0.5em] text-white/40 mb-8 md:mb-12 uppercase italic">Growth Projection Analytics</h3>
+          <div className="flex justify-between items-end mb-8 md:mb-12">
+            <h3 className="text-[10px] font-thin tracking-[0.5em] text-white/40 uppercase italic">Cash Flow Analytics: Revenue vs Owing vs Expenses</h3>
+          </div>
           <div className="h-64 md:h-80">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={projects.slice(0, 15).reverse()}>
+              <ComposedChart data={chartData}>
                 <defs>
                   <linearGradient id="colorBlue" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
                     <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
-                <Tooltip contentStyle={{backgroundColor: '#050506', border: '1px solid #ffffff10', borderRadius: '24px', fontSize: '9px', tracking: '0.2em'}} />
-                <Area type="monotone" dataKey="paid" stroke="#3b82f6" fill="url(#colorBlue)" strokeWidth={2} />
-              </AreaChart>
+                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                <XAxis dataKey="name" stroke="#ffffff40" fontSize={9} tickLine={false} axisLine={false} />
+                <YAxis stroke="#ffffff40" fontSize={9} tickLine={false} axisLine={false} tickFormatter={(val) => `$${val}`} />
+                <Tooltip 
+                  contentStyle={{backgroundColor: '#050506', border: '1px solid #ffffff10', borderRadius: '16px', fontSize: '10px', tracking: '0.1em'}} 
+                  itemStyle={{fontFamily: 'monospace'}}
+                />
+                <Legend wrapperStyle={{ fontSize: '9px', tracking: '0.2em', textTransform: 'uppercase' }} />
+                <Area type="monotone" name="Revenue" dataKey="revenue" stroke="#3b82f6" fill="url(#colorBlue)" strokeWidth={2} />
+                <Bar name="Client Owing" dataKey="owing" fill="#a855f7" radius={[4, 4, 0, 0]} maxBarSize={30} />
+                <Bar name="Expenses" dataKey="expenses" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={30} />
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
         </div>
@@ -219,7 +233,7 @@ function DashboardView({ projects, expenses }) {
             <p className="text-5xl md:text-6xl font-extralight tracking-tighter italic">${(totalRev - totalBurn).toLocaleString()}</p>
           </div>
           <div className="space-y-6 pt-12 border-t border-black/5 hidden md:block">
-            <p className="text-[9px] leading-relaxed font-bold uppercase tracking-[0.2em] opacity-30 italic">UY Studios Infrastructure v3.5</p>
+            <p className="text-[9px] leading-relaxed font-bold uppercase tracking-[0.2em] opacity-30 italic">UY Studios Infrastructure v3.6</p>
           </div>
         </div>
       </div>
@@ -290,29 +304,49 @@ function ProjectsView({ projects }) {
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 md:gap-12">
         {projects.map(p => (
-          <div key={p.id} className="group bg-[#050506] border border-white/5 p-8 md:p-12 rounded-[2.5rem] md:rounded-[3.5rem] hover:border-blue-500/40 transition-all duration-700 shadow-2xl hover:shadow-[0_0_60px_rgba(59,130,246,0.15)] relative overflow-hidden active:scale-[0.98] md:active:scale-100">
-            <div className="flex justify-between items-start mb-10 md:mb-12">
-              <div className="space-y-4">
-                <StatusBadge status={p.status} />
-                <h3 className="text-2xl md:text-3xl font-extralight text-white tracking-tighter uppercase group-hover:text-blue-400 transition-colors duration-500 italic">{p.clientName}</h3>
-                <p className="text-[8px] font-bold tracking-[0.4em] text-slate-700 uppercase italic font-black">{p.eventType}</p>
+          <div key={p.id} className="group bg-[#050506] border border-white/5 p-8 md:p-12 rounded-[2.5rem] md:rounded-[3.5rem] hover:border-blue-500/40 transition-all duration-700 shadow-2xl hover:shadow-[0_0_60px_rgba(59,130,246,0.15)] relative overflow-hidden active:scale-[0.98] md:active:scale-100 flex flex-col justify-between">
+            <div>
+              <div className="flex justify-between items-start mb-10 md:mb-12">
+                <div className="space-y-4">
+                  <StatusBadge status={p.status} />
+                  <h3 className="text-2xl md:text-3xl font-extralight text-white tracking-tighter uppercase group-hover:text-blue-400 transition-colors duration-500 italic">{p.clientName}</h3>
+                  <p className="text-[8px] font-bold tracking-[0.4em] text-slate-700 uppercase italic font-black">{p.eventType}</p>
+                </div>
+                <div className="flex gap-3 md:gap-4 md:opacity-0 group-hover:opacity-100 transition-all duration-500">
+                  <button onClick={() => { setEditData(p); setShowModal(true); }} className="p-3 md:p-4 bg-white/5 rounded-full hover:bg-white text-black transition-all active:scale-75 shadow-lg shadow-white/5"><Edit3 className="w-4 h-4" /></button>
+                  <button onClick={() => deleteDoc(doc(db, 'projects', p.id))} className="p-3 md:p-4 bg-red-500/10 rounded-full hover:bg-red-500 text-white transition-all active:scale-75 shadow-lg shadow-red-500/5"><Trash2 className="w-4 h-4" /></button>
+                </div>
               </div>
-              <div className="flex gap-3 md:gap-4 md:opacity-0 group-hover:opacity-100 transition-all duration-500">
-                <button onClick={() => { setEditData(p); setShowModal(true); }} className="p-3 md:p-4 bg-white/5 rounded-full hover:bg-white text-black transition-all active:scale-75 shadow-lg shadow-white/5"><Edit3 className="w-4 h-4" /></button>
-                <button onClick={() => deleteDoc(doc(db, 'projects', p.id))} className="p-3 md:p-4 bg-red-500/10 rounded-full hover:bg-red-500 text-white transition-all active:scale-75 shadow-lg shadow-red-500/5"><Trash2 className="w-4 h-4" /></button>
+
+              <div className="grid grid-cols-2 gap-3 md:gap-4 mb-8 font-bold uppercase italic font-black">
+                 <a href={p.mapsLink} target="_blank" rel="noreferrer" className="p-4 md:p-6 bg-white/[0.01] border border-white/5 rounded-2xl text-[8px] tracking-[0.2em] text-slate-600 uppercase flex items-center gap-3 md:gap-4 hover:border-blue-500/50 hover:text-blue-400 transition-all overflow-hidden shadow-inner">
+                   <MapPin className="w-3.5 h-3.5 flex-shrink-0 drop-shadow-[0_0_5px_rgba(59,130,246,0.5)]" /> <span className="truncate">{p.location || 'Pending Coordinates'}</span>
+                 </a>
+                 <a href={p.filesLink} target="_blank" rel="noreferrer" className="p-4 md:p-6 bg-white/[0.01] border border-white/5 rounded-2xl text-[8px] tracking-[0.2em] text-slate-600 uppercase flex items-center gap-3 md:gap-4 hover:border-emerald-500/50 hover:text-emerald-400 transition-all shadow-inner">
+                   <Globe className="w-3.5 h-3.5 flex-shrink-0 drop-shadow-[0_0_5px_rgba(16,185,129,0.5)]" /> Secure Assets
+                 </a>
               </div>
+
+              {/* TEAM MEMBERS DISPLAY MATRIX */}
+              {p.teamMembers && p.teamMembers.length > 0 && (
+                <div className="mb-8 p-6 rounded-2xl bg-white/[0.01] border border-white/5 shadow-inner">
+                  <p className="text-[8px] font-black tracking-[0.4em] text-slate-700 uppercase mb-4 italic">Assigned Operatives</p>
+                  <div className="space-y-3">
+                    {p.teamMembers.map((member, i) => (
+                      <div key={i} className="flex justify-between items-center text-[9px] uppercase tracking-widest font-bold">
+                        <div className="flex items-center gap-3">
+                          <Users className="w-3 h-3 text-purple-500" />
+                          <span className="text-white">{member.name} <span className="text-slate-600 ml-1">[{member.role}]</span></span>
+                        </div>
+                        <span className="text-emerald-400 font-mono">${member.amount}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3 md:gap-4 mb-10 md:mb-12 font-bold uppercase italic font-black">
-               <a href={p.mapsLink} target="_blank" rel="noreferrer" className="p-4 md:p-6 bg-white/[0.01] border border-white/5 rounded-2xl text-[8px] tracking-[0.2em] text-slate-600 uppercase flex items-center gap-3 md:gap-4 hover:border-blue-500/50 hover:text-blue-400 transition-all overflow-hidden shadow-inner">
-                 <MapPin className="w-3.5 h-3.5 flex-shrink-0 drop-shadow-[0_0_5px_rgba(59,130,246,0.5)]" /> <span className="truncate">{p.location || 'Pending Coordinates'}</span>
-               </a>
-               <a href={p.filesLink} target="_blank" rel="noreferrer" className="p-4 md:p-6 bg-white/[0.01] border border-white/5 rounded-2xl text-[8px] tracking-[0.2em] text-slate-600 uppercase flex items-center gap-3 md:gap-4 hover:border-emerald-500/50 hover:text-emerald-400 transition-all shadow-inner">
-                 <Globe className="w-3.5 h-3.5 flex-shrink-0 drop-shadow-[0_0_5px_rgba(16,185,129,0.5)]" /> Secure Assets
-               </a>
-            </div>
-
-            <div className="flex items-center justify-between pt-8 md:pt-10 border-t border-white/5 italic">
+            <div className="flex items-center justify-between pt-8 md:pt-10 border-t border-white/5 italic mt-auto">
               <div className="text-right">
                 <p className="text-[8px] font-black text-slate-800 tracking-[0.4em] uppercase mb-1 font-black">Liquidity Stream</p>
                 <p className="text-xl md:text-2xl font-extralight text-white font-mono tracking-tighter">${p.paid} <span className="opacity-20 text-[10px] tracking-normal">/ ${p.budget}</span></p>
@@ -371,18 +405,18 @@ const MetricCard = ({ label, value, accent }) => {
   };
   return (
     <div className={`p-6 md:p-10 rounded-[2rem] md:rounded-[3.5rem] bg-[#050506] border ${tints[accent]} transition-all hover:scale-[1.03] active:scale-95 duration-700 shadow-xl shadow-black/40`}>
-      <p className="text-[7px] md:text-[8px] font-black tracking-[0.5em] opacity-40 mb-3 md:mb-5 uppercase italic font-black">{label}</p>
+      <p className="text-[7px] md:text-[8px] font-black tracking-[0.5em] opacity-40 mb-3 md:mb-5 uppercase italic font-black truncate">{label}</p>
       <p className="text-2xl md:text-4xl font-extralight tracking-tighter italic text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.1)] truncate">{value}</p>
     </div>
   );
 };
 
-const InputGroup = ({ label, type = "text", value, onChange }) => (
-  <div className="space-y-3 md:space-y-4">
+const InputGroup = ({ label, type = "text", value, onChange, placeholder = "" }) => (
+  <div className="space-y-3 md:space-y-4 w-full">
     <label className="text-[8px] font-black text-slate-800 tracking-[0.6em] uppercase px-2 italic font-black">{label}</label>
     <input 
-      type={type} value={value} onChange={e => onChange(e.target.value)} 
-      className="w-full bg-[#010102] border border-white/5 rounded-2xl py-4 md:py-5 px-6 md:px-8 text-xs text-white focus:outline-none focus:border-white/20 transition-all font-bold tracking-[0.2em] uppercase shadow-inner italic"
+      type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      className="w-full bg-[#010102] border border-white/5 rounded-2xl py-4 md:py-5 px-6 md:px-8 text-xs text-white placeholder:text-slate-800 focus:outline-none focus:border-white/20 transition-all font-bold tracking-[0.2em] uppercase shadow-inner italic"
     />
   </div>
 );
@@ -415,7 +449,7 @@ const Login = ({ onLogin }) => {
           <ShieldCheck className="w-8 h-8 md:w-10 md:h-10 text-black group-hover:scale-110 transition-transform duration-700" />
         </div>
         <h1 className="text-2xl md:text-3xl font-thin text-white tracking-[0.5em] mb-4 uppercase italic">UY Studios</h1>
-        <p className="text-[9px] font-black text-slate-800 tracking-[0.6em] mb-12 md:mb-16 uppercase italic font-black tracking-[0.7em]">Neural Terminal v1</p>
+        <p className="text-[9px] font-black text-slate-800 tracking-[0.6em] mb-12 md:mb-16 uppercase italic font-black tracking-[0.7em]">Neural Terminal v3.6</p>
         <input 
           type="password" autoFocus onChange={e => setVal(e.target.value)} 
           className="w-full bg-[#010102] border border-white/5 rounded-2xl md:rounded-[2.5rem] py-6 md:py-8 px-8 text-center text-white tracking-[1.5em] md:tracking-[2em] focus:outline-none focus:border-white/20 mb-10 md:mb-12 font-mono text-xl md:text-2xl shadow-inner shadow-black/50"
@@ -458,13 +492,29 @@ function ExpenseModal({ expense, onClose }) {
 function ProjectModal({ project, onClose }) {
   const [form, setForm] = useState(project || {
     clientName: '', eventType: '', date: '', location: '', mapsLink: '', filesLink: '',
-    budget: 0, paid: 0, status: 'Not Started'
+    budget: 0, paid: 0, status: 'Not Started', teamMembers: []
   });
 
   const save = async (e) => {
     e.preventDefault();
     project ? await updateDoc(doc(db, 'projects', project.id), form) : await addDoc(collection(db, 'projects'), form);
     onClose();
+  };
+
+  const addTeamMember = () => {
+    setForm({ ...form, teamMembers: [...(form.teamMembers || []), { name: '', role: '', amount: 0 }] });
+  };
+
+  const updateTeamMember = (index, field, value) => {
+    const updated = [...form.teamMembers];
+    updated[index][field] = value;
+    setForm({ ...form, teamMembers: updated });
+  };
+
+  const removeTeamMember = (index) => {
+    const updated = [...form.teamMembers];
+    updated.splice(index, 1);
+    setForm({ ...form, teamMembers: updated });
   };
 
   return (
@@ -476,9 +526,10 @@ function ProjectModal({ project, onClose }) {
         </header>
 
         <form onSubmit={save} className="space-y-10 md:space-y-12">
+          {/* CLIENT DATA */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 italic font-black uppercase">
             <InputGroup label="Client Vector" value={form.clientName} onChange={v => setForm({...form, clientName: v})} />
-            <InputGroup label="Project Domain" value={form.eventType} onChange={v => setForm({...form, eventType: v})} />
+            <InputGroup label="Event Type" value={form.eventType} placeholder="Wedding, Headshots..." onChange={v => setForm({...form, eventType: v})} />
             <InputGroup label="Timeline Marker" type="date" value={form.date} onChange={v => setForm({...form, date: v})} />
             <div className="space-y-4">
               <label className="text-[8px] font-black text-slate-800 tracking-[0.6em] uppercase px-2 italic font-black">Assignment Phase</label>
@@ -491,6 +542,31 @@ function ProjectModal({ project, onClose }) {
             </div>
           </div>
           <InputGroup label="Venue Coordinates" value={form.location} onChange={v => setForm({...form, location: v})} />
+          
+          {/* TEAM MEMBERS SECTION */}
+          <div className="pt-8 border-t border-white/5">
+            <div className="flex justify-between items-center mb-6">
+               <label className="text-[8px] font-black text-slate-800 tracking-[0.6em] uppercase px-2 italic font-black">Team Allocation Matrix</label>
+               <button type="button" onClick={addTeamMember} className="flex items-center gap-2 text-[8px] uppercase tracking-widest font-black text-white bg-white/5 px-4 py-3 rounded-full hover:bg-purple-500 hover:text-white transition-all shadow-inner">
+                 <UserPlus className="w-3 h-3" /> Add Operative
+               </button>
+            </div>
+            
+            <div className="space-y-4">
+              {form.teamMembers && form.teamMembers.map((member, index) => (
+                <div key={index} className="flex flex-col md:flex-row gap-4 items-center bg-[#010102] p-4 rounded-2xl border border-white/5 shadow-inner">
+                  <InputGroup label={`Name`} value={member.name} onChange={v => updateTeamMember(index, 'name', v)} />
+                  <InputGroup label={`Role`} value={member.role} placeholder="2nd Shooter" onChange={v => updateTeamMember(index, 'role', v)} />
+                  <InputGroup label={`Paid ($)`} type="number" value={member.amount} onChange={v => updateTeamMember(index, 'amount', v)} />
+                  <button type="button" onClick={() => removeTeamMember(index)} className="mt-6 p-4 bg-red-500/10 rounded-xl text-red-500 hover:bg-red-500 hover:text-white transition-all">
+                    <UserMinus className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* FINANCIALS */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-8 border-t border-white/5 italic font-black uppercase">
             <InputGroup label="Quote Yield ($)" type="number" value={form.budget} onChange={v => setForm({...form, budget: v})} />
             <InputGroup label="Liquidity Injected ($)" type="number" value={form.paid} onChange={v => setForm({...form, paid: v})} />
